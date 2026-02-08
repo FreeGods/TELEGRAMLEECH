@@ -5,6 +5,8 @@ from ...core.plugin_manager import get_plugin_manager
 class BotCommands:
     StartCommand = "start"
     LoginCommand = "login"
+    SpotdlCommand = "spotdl"
+    SpotdlLeechCommand = "spotdlleech"
 
     _static_commands = {
         "Mirror": ["mirror", "m"],
