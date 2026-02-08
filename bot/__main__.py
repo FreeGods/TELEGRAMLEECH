@@ -3,7 +3,7 @@
 from .core.config_manager import Config
 Config.load()
 
-from asyncio import gather, sleep, CancelledError  # ✅ IMPORT CORRETO NO TOPO
+from asyncio import gather
 from datetime import datetime
 from logging import Formatter
 from time import localtime
@@ -166,23 +166,20 @@ async def main():
     LOGGER.info("Bot está online e escutando atualizações...")
 
     # =======================================
-    #     MANTÉM O PROGRAMA VIVO
+    #     MANTÉM O BOT ATIVO USANDO PYROGRAM
     # =======================================
-    try:
-        await sleep(float('inf'))  # ✅ AGORA FUNCIONA (import correto no topo)
-    except (KeyboardInterrupt, CancelledError):
-        LOGGER.info("Shutdown recebido. Encerrando bot...")
-        # Cleanup opcional
-        try:
-            await TgClient.bot.stop()
-        except Exception:
-            pass
+    from pyrogram import idle
+    
+    await idle()  # ✅ MÉTODO CORRETO - Mantém o bot rodando até SIGINT/SIGTERM
 
 
 # =======================================
 #          EXECUÇÃO PRINCIPAL
 # =======================================
 if __name__ == "__main__":
-    from asyncio import run  # ✅ IMPORT LOCAL TAMBÉM OK
+    from asyncio import run
     
-    run(main())
+    try:
+        run(main())
+    except KeyboardInterrupt:
+        LOGGER.info("Bot encerrado pelo usuário")
