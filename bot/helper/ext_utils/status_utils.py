@@ -48,6 +48,7 @@ class EngineStatus:
         self.STATUS_TGRAM = f"Pyro v{ver.get('pyrotgfork', 'N/A')}"
         self.STATUS_MEGA = f"MegaCMD v{ver.get('mega', 'N/A')}"
         self.STATUS_YTDLP = f"yt-dlp v{ver.get('yt-dlp', 'N/A')}"
+        self.STATUS_SPOTDL = f"spotdl v{ver.get('spotdl', 'N/A')}"
         self.STATUS_FFMPEG = f"ffmpeg v{ver.get('ffmpeg', 'N/A')}"
         self.STATUS_7Z = f"7z v{ver.get('7z', 'N/A')}"
         self.STATUS_RCLONE = f"RClone v{ver.get('rclone', 'N/A')}"
