@@ -3,6 +3,7 @@
 from .core.config_manager import Config
 Config.load()
 
+from asyncio import gather, sleep, CancelledError  # ✅ IMPORT CORRETO NO TOPO
 from datetime import datetime
 from logging import Formatter
 from time import localtime
@@ -13,8 +14,6 @@ from .core.tg_client import TgClient
 
 
 async def main():
-    from asyncio import gather
-
     from .core.startup import (
         load_configurations,
         load_settings,
@@ -103,6 +102,7 @@ async def main():
     plugin_manager.bot = TgClient.bot
     register_plugin_commands()
 
+    # ✅ REGISTRO DOS COMANDOS SPOTDL
     from .modules.spotdl import spotdl, spotdl_leech
     from .helper.telegram_helper.bot_commands import BotCommands
 
@@ -130,6 +130,21 @@ async def main():
             await delete_message(message)
             await TgClient.reload()
             add_handlers()
+            
+            # ✅ RE-REGISTRO DOS COMANDOS SPOTDL APÓS RESTART
+            TgClient.bot.add_handler(
+                MessageHandler(
+                    spotdl,
+                    filters=command(BotCommands.SpotdlCommand) & CustomFilters.authorized
+                )
+            )
+            TgClient.bot.add_handler(
+                MessageHandler(
+                    spotdl_leech,
+                    filters=command(BotCommands.SpotdlLeechCommand) & CustomFilters.authorized
+                )
+            )
+            
             TgClient.bot.add_handler(
                 CallbackQueryHandler(
                     restart_sessions_confirm,
@@ -154,16 +169,20 @@ async def main():
     #     MANTÉM O PROGRAMA VIVO
     # =======================================
     try:
-        await asyncio.sleep(float('inf'))  # Mantém o loop ativo indefinidamente
-    except (KeyboardInterrupt, asyncio.CancelledError):
+        await sleep(float('inf'))  # ✅ AGORA FUNCIONA (import correto no topo)
+    except (KeyboardInterrupt, CancelledError):
         LOGGER.info("Shutdown recebido. Encerrando bot...")
-        # Aqui você pode adicionar cleanup se quiser (ex: TgClient.bot.stop())
+        # Cleanup opcional
+        try:
+            await TgClient.bot.stop()
+        except Exception:
+            pass
 
 
 # =======================================
 #          EXECUÇÃO PRINCIPAL
 # =======================================
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(main())
+    from asyncio import run  # ✅ IMPORT LOCAL TAMBÉM OK
+    
+    run(main())
