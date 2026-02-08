@@ -3,7 +3,7 @@
 from .core.config_manager import Config
 Config.load()
 
-from asyncio import gather
+from asyncio import gather, get_event_loop
 from datetime import datetime
 from logging import Formatter
 from time import localtime
@@ -163,14 +163,6 @@ async def main():
     )
 
     LOGGER.info("WZ Client(s) & Services Started !")
-    LOGGER.info("Bot está online e escutando atualizações...")
-
-    # =======================================
-    #     MANTÉM O BOT ATIVO USANDO PYROGRAM
-    # =======================================
-    from pyrogram import idle
-    
-    await idle()  # ✅ MÉTODO CORRETO - Mantém o bot rodando até SIGINT/SIGTERM
 
 
 # =======================================
@@ -179,7 +171,10 @@ async def main():
 if __name__ == "__main__":
     from asyncio import run
     
-    try:
-        run(main())
-    except KeyboardInterrupt:
-        LOGGER.info("Bot encerrado pelo usuário")
+    bot_loop = get_event_loop()
+    
+    bot_loop.run_until_complete(main())
+    
+    LOGGER.info("Bot está online e escutando atualizações...")
+    
+    bot_loop.run_forever()  # ✅ MÉTODO ORIGINAL QUE FUNCIONA
