@@ -107,17 +107,20 @@ class SpotdlHelper:
     def _extract_meta_data(self, link):
         """Extract metadata from Spotify link"""
         try:
-            # Initialize Spotdl client
-            settings = {
-                'audio_providers': ['youtube-music'],
-                'lyrics_providers': ['genius', 'musixmatch', 'azlyrics'],
-                'ffmpeg': BinConfig.FFMPEG_NAME or 'ffmpeg',
-                'bitrate': '320k',
-                'format': 'mp3',
-                'threads': 4,
-            }
-            
-            self.spotdl_client = Spotdl(client_id=None, client_secret=None, **settings)
+            # ✅ CORREÇÃO: API correta do Spotdl v4
+            # Spotdl() aceita apenas client_id e client_secret (opcionais)
+            # Configurações vão via spotdl.settings
+            self.spotdl_client = Spotdl(
+                client_id=None,  # Opcional - funciona sem credenciais Spotify
+                client_secret=None,
+                headless=True,
+                downloader_settings={
+                    'ffmpeg': BinConfig.FFMPEG_NAME,  # ✅ USA "mediaforge"
+                    'bitrate': '320k',
+                    'format': 'mp3',
+                    'threads': 4,
+                }
+            )
             
             # Get songs from link
             songs = self.spotdl_client.search([link])
@@ -137,7 +140,7 @@ class SpotdlHelper:
                     # 320kbps = 40KB/s, convert seconds to bytes
                     total_size += int(song.duration * 40000)
             
-            self._listener.size = total_size
+            self._listener.size = total_size if total_size > 0 else 1024 * 1024  # Default 1MB se não calcular
             
             if not self._listener.name:
                 if self.is_playlist:
@@ -168,13 +171,23 @@ class SpotdlHelper:
             if self.is_playlist:
                 output_path = ospath.join(path, self._listener.name)
             
-            # Download songs
-            results = self.spotdl_client.download_songs(songs, output=output_path)
-            
-            # Check for errors
-            failed = [r for r in results if r is None or isinstance(r, Exception)]
-            if failed and not self._listener.is_cancelled:
-                LOGGER.warning(f"Failed to download {len(failed)} songs")
+            # ✅ CORREÇÃO: Método correto de download no spotdl v4
+            # download_songs() → download() ou download_multiple_songs()
+            for song in songs:
+                if self._listener.is_cancelled:
+                    break
+                    
+                try:
+                    # Download individual song
+                    result = self.spotdl_client.downloader.download_song(song)
+                    
+                    if result:
+                        self.playlist_count += 1
+                        LOGGER.info(f"Downloaded: {song.name}")
+                    
+                except Exception as e:
+                    LOGGER.error(f"Failed to download {song.name}: {e}")
+                    continue
             
             if self._listener.is_cancelled:
                 return
