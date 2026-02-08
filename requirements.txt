@@ -33,6 +33,7 @@ pytz
 qbittorrent-api
 requests
 speedtest-cli
+spotdl
 telegraph
 tenacity
 tgcrypto
