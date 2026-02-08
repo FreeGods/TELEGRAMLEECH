@@ -82,26 +82,50 @@ async def main():
     )
 
     # =======================================
-    #    Registra tudo que precisa do bot ativo
+    #     REGISTRO DE TODOS OS HANDLERS
     # =======================================
+
     from .core.handlers import add_handlers
     from .helper.ext_utils.bot_utils import create_help_buttons, new_task
     from .helper.listeners.aria2_listener import add_aria2_callbacks
     from .core.plugin_manager import get_plugin_manager
     from .modules.plugin_manager import register_plugin_commands
-    from pyrogram.filters import regex
-    from pyrogram.handlers import CallbackQueryHandler
+    from pyrogram.filters import regex, command
+    from pyrogram.handlers import CallbackQueryHandler, MessageHandler
     from .helper.telegram_helper.filters import CustomFilters
     from .helper.telegram_helper.message_utils import delete_message, edit_message, send_message
 
+    # Handlers gerais do bot
     add_aria2_callbacks()
     create_help_buttons()
     add_handlers()
 
+    # Plugin manager
     plugin_manager = get_plugin_manager()
     plugin_manager.bot = TgClient.bot
     register_plugin_commands()
 
+    # =======================================
+    #     COMANDOS SPOTDL E SPOTDL LEECH
+    # =======================================
+    from .modules.spotdl import spotdl, spotdl_leech
+    from .helper.telegram_helper.bot_commands import BotCommands
+
+    TgClient.bot.add_handler(
+        MessageHandler(
+            spotdl,
+            filters=command(BotCommands.SpotdlCommand) & CustomFilters.authorized
+        )
+    )
+
+    TgClient.bot.add_handler(
+        MessageHandler(
+            spotdl_leech,
+            filters=command(BotCommands.SpotdlLeechCommand) & CustomFilters.authorized
+        )
+    )
+
+    # Handler de restart (já existente)
     @new_task
     async def restart_sessions_confirm(_, query):
         data = query.data.split()
@@ -122,7 +146,6 @@ async def main():
         else:
             await delete_message(message)
 
-    # Registra o handler de restart
     TgClient.bot.add_handler(
         CallbackQueryHandler(
             restart_sessions_confirm,
@@ -134,16 +157,9 @@ async def main():
 
 
 # =======================================
-#    EXECUÇÃO
+#          EXECUÇÃO PRINCIPAL
 # =======================================
 if __name__ == "__main__":
     import asyncio
 
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(main())
-        loop.run_forever()           # ou: await TgClient.bot.idle()
-    except KeyboardInterrupt:
-        LOGGER.info("Received stop signal, shutting down...")
-    finally:
-        loop.close()
+    asyncio.run(main())
