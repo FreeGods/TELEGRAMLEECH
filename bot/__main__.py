@@ -155,6 +155,11 @@ async def main():
 
     LOGGER.info("WZ Client(s) & Services Started !")
 
+    # =======================================
+    #     MANTÉM O BOT ATIVO (ESSA É A LINHA PRINCIPAL QUE FALTAVA)
+    # =======================================
+    await TgClient.bot.idle()  # Isso mantém o bot escutando atualizações indefinidamente
+
 
 # =======================================
 #          EXECUÇÃO PRINCIPAL
