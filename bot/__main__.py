@@ -95,19 +95,14 @@ async def main():
     from .helper.telegram_helper.filters import CustomFilters
     from .helper.telegram_helper.message_utils import delete_message, edit_message, send_message
 
-    # Handlers gerais do bot
     add_aria2_callbacks()
     create_help_buttons()
     add_handlers()
 
-    # Plugin manager
     plugin_manager = get_plugin_manager()
     plugin_manager.bot = TgClient.bot
     register_plugin_commands()
 
-    # =======================================
-    #     COMANDOS SPOTDL E SPOTDL LEECH
-    # =======================================
     from .modules.spotdl import spotdl, spotdl_leech
     from .helper.telegram_helper.bot_commands import BotCommands
 
@@ -125,7 +120,6 @@ async def main():
         )
     )
 
-    # Handler de restart (já existente)
     @new_task
     async def restart_sessions_confirm(_, query):
         data = query.data.split()
@@ -154,11 +148,16 @@ async def main():
     )
 
     LOGGER.info("WZ Client(s) & Services Started !")
+    LOGGER.info("Bot está online e escutando atualizações...")
 
     # =======================================
-    #     MANTÉM O BOT ATIVO (ESSA É A LINHA PRINCIPAL QUE FALTAVA)
+    #     MANTÉM O PROGRAMA VIVO
     # =======================================
-    await TgClient.bot.idle()  # Isso mantém o bot escutando atualizações indefinidamente
+    try:
+        await asyncio.sleep(float('inf'))  # Mantém o loop ativo indefinidamente
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        LOGGER.info("Shutdown recebido. Encerrando bot...")
+        # Aqui você pode adicionar cleanup se quiser (ex: TgClient.bot.stop())
 
 
 # =======================================
