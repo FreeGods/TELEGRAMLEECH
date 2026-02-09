@@ -937,16 +937,20 @@ class TaskConfig:
         fvext = []
         if self.convert_video:
             vdata = self.convert_video.split()
-            vext = vdata[0].lower()
-            if len(vdata) > 2:
-                if "+" in vdata[1].split():
-                    vstatus = "+"
-                elif "-" in vdata[1].split():
-                    vstatus = "-"
+            if len(vdata) >= 1:
+                vext = vdata[0].lower()
+                if len(vdata) > 2:
+                    if "+" in vdata[1].split():
+                        vstatus = "+"
+                    elif "-" in vdata[1].split():
+                        vstatus = "-"
+                    else:
+                        vstatus = ""
+                    fvext.extend(f".{ext.lower()}" for ext in vdata[2:])
                 else:
                     vstatus = ""
-                fvext.extend(f".{ext.lower()}" for ext in vdata[2:])
             else:
+                vext = ""
                 vstatus = ""
         else:
             vext = ""
@@ -955,16 +959,20 @@ class TaskConfig:
         faext = []
         if self.convert_audio:
             adata = self.convert_audio.split()
-            aext = adata[0].lower()
-            if len(adata) > 2:
-                if "+" in adata[1].split():
-                    astatus = "+"
-                elif "-" in adata[1].split():
-                    astatus = "-"
+            if len(adata) >= 1:
+                aext = adata[0].lower()
+                if len(adata) > 2:
+                    if "+" in adata[1].split():
+                        astatus = "+"
+                    elif "-" in adata[1].split():
+                        astatus = "-"
+                    else:
+                        astatus = ""
+                    faext.extend(f".{ext.lower()}" for ext in adata[2:])
                 else:
                     astatus = ""
-                faext.extend(f".{ext.lower()}" for ext in adata[2:])
             else:
+                aext = ""
                 astatus = ""
         else:
             aext = ""

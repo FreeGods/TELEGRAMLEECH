@@ -216,11 +216,14 @@ def get_mime_type(file_path):
 
 
 async def remove_excluded_files(fpath, ee):
+    if not ee:
+        return
+    ee_tuple = tuple(ee) if ee else ()
     for root, _, files in await sync_to_async(walk, fpath):
         if root.strip().endswith("/yt-dlp-thumb"):
             continue
         for f in files:
-            if f.strip().lower().endswith(tuple(ee)):
+            if ee_tuple and f.strip().lower().endswith(ee_tuple):
                 await remove(ospath.join(root, f))
 
 

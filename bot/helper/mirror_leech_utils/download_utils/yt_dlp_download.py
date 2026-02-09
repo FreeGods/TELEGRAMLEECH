@@ -227,22 +227,23 @@ class YoutubeDLHelper:
 
         if qual.startswith("ba/b-"):
             audio_info = qual.split("-")
-            qual = audio_info[0]
-            audio_format = audio_info[1]
-            rate = audio_info[2]
-            self.opts["postprocessors"].append(
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": audio_format,
-                    "preferredquality": rate,
-                }
-            )
-            if audio_format == "vorbis":
-                self._ext = ".ogg"
-            elif audio_format == "alac":
-                self._ext = ".m4a"
-            else:
-                self._ext = f".{audio_format}"
+            if len(audio_info) >= 3:
+                qual = audio_info[0]
+                audio_format = audio_info[1]
+                rate = audio_info[2]
+                self.opts["postprocessors"].append(
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": audio_format,
+                        "preferredquality": rate,
+                    }
+                )
+                if audio_format == "vorbis":
+                    self._ext = ".ogg"
+                elif audio_format == "alac":
+                    self._ext = ".m4a"
+                else:
+                    self._ext = f".{audio_format}"
 
         if not self._listener.is_leech or self._listener.thumbnail_layout:
             self.opts["writethumbnail"] = False
