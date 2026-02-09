@@ -1,9 +1,8 @@
 from logging import getLogger
-from os import path as ospath, makedirs, remove, listdir
+from os import path as ospath, makedirs
 from secrets import token_hex
 from contextlib import suppress
 from shutil import rmtree
-import gc
 
 from spotdl import Spotdl
 from spotdl.types.song import Song
@@ -32,6 +31,7 @@ def get_ffmpeg_path():
         return ffmpeg_path
     except ImportError:
         LOGGER.warning("imageio-ffmpeg not found, trying system ffmpeg")
+        # Fallback to system ffmpeg or BinConfig
         return BinConfig.FFMPEG_NAME if hasattr(BinConfig, 'FFMPEG_NAME') else 'ffmpeg'
 
 
@@ -45,6 +45,8 @@ class MyLogger:
 
     def info(self, msg):
         LOGGER.info(msg)
+        if "Downloaded" in msg:
+            self._obj.playlist_count += 1
 
     def warning(self, msg):
         LOGGER.warning(msg)
@@ -69,7 +71,6 @@ class SpotdlHelper:
         
         # Spotdl client - será criado em cada download
         self.spotdl_client = None
-        self.download_path = None
         
     @property
     def download_speed(self):
@@ -96,35 +97,6 @@ class SpotdlHelper:
     def eta(self):
         return self._eta
 
-    def _cleanup_client(self):
-        """Force cleanup of Spotdl client and reset singleton"""
-        if self.spotdl_client:
-            try:
-                # Limpar downloader
-                if hasattr(self.spotdl_client, 'downloader'):
-                    self.spotdl_client.downloader = None
-                
-                # Limpar client_id e client_secret
-                if hasattr(self.spotdl_client, 'client_id'):
-                    self.spotdl_client.client_id = None
-                if hasattr(self.spotdl_client, 'client_secret'):
-                    self.spotdl_client.client_secret = None
-                
-                # ✅ CRÍTICO: Reset do singleton do Spotdl
-                # O Spotdl usa uma variável de classe _instance para singleton
-                if hasattr(Spotdl, '_instance'):
-                    Spotdl._instance = None
-                
-                # Remover referência
-                self.spotdl_client = None
-                
-                # Forçar garbage collection
-                gc.collect()
-                
-                LOGGER.info("✅ Spotdl client cleaned up successfully")
-            except Exception as e:
-                LOGGER.error(f"Error cleaning up Spotdl client: {e}")
-
     def _on_download_progress(self, progress_handler):
         """Callback for download progress"""
         if self._listener.is_cancelled:
@@ -140,19 +112,15 @@ class SpotdlHelper:
 
     def _on_download_error(self, error):
         self._listener.is_cancelled = True
-        self._cleanup_client()  # Cleanup ao dar erro
         async_to_sync(self._listener.on_download_error, error)
 
     def _extract_meta_data(self, link):
         """Extract metadata from Spotify link"""
         try:
-            # ✅ Limpar cliente anterior antes de criar novo
-            self._cleanup_client()
-            
+            # ✅ CORREÇÃO 1: Criar NOVO cliente para cada download
+            # Isso evita o erro "A spotify client has already been initialized"
             ffmpeg_path = get_ffmpeg_path()
             
-            # ✅ Criar NOVO cliente
-            LOGGER.info("Creating new Spotdl client...")
             self.spotdl_client = Spotdl(
                 client_id=None,
                 client_secret=None,
@@ -164,20 +132,16 @@ class SpotdlHelper:
                     'threads': 4,
                 }
             )
-            LOGGER.info("✅ Spotdl client created successfully")
             
             # Get songs from link
-            LOGGER.info(f"Searching Spotify link: {link}")
             songs = self.spotdl_client.search([link])
             
             if not songs:
                 raise ValueError("No songs found in Spotify link")
             
-            # Contagem correta
+            # ✅ CORREÇÃO 3: Contagem correta
             self.total_songs = len(songs)
-            self.playlist_count = 0
-            
-            LOGGER.info(f"Found {self.total_songs} song(s)")
+            self.playlist_count = 0  # Reset counter
             
             # Check if playlist
             if len(songs) > 1:
@@ -187,6 +151,7 @@ class SpotdlHelper:
             total_size = 0
             for song in songs:
                 if hasattr(song, 'duration') and song.duration:
+                    # 320kbps = 40KB/s, convert seconds to bytes
                     total_size += int(song.duration * 40000)
             
             self._listener.size = total_size if total_size > 0 else 1024 * 1024
@@ -200,6 +165,7 @@ class SpotdlHelper:
                     else:
                         self._listener.name = f"Spotify_Playlist_{self.total_songs}_songs"
                 else:
+                    # Single song
                     song = songs[0]
                     artist = song.artist if hasattr(song, 'artist') else 'Unknown'
                     name = song.name if hasattr(song, 'name') else 'Unknown'
@@ -218,7 +184,7 @@ class SpotdlHelper:
             if not songs:
                 raise ValueError("No songs to download")
             
-            # Criar diretório se não existir
+            # ✅ CORREÇÃO 2: Criar diretório se não existir
             if not ospath.exists(path):
                 makedirs(path, exist_ok=True)
                 LOGGER.info(f"Created download directory: {path}")
@@ -230,11 +196,9 @@ class SpotdlHelper:
             else:
                 output_path = path
             
-            self.download_path = output_path
-            
             LOGGER.info(f"Downloading {len(songs)} song(s) to: {output_path}")
             
-            # Download songs one by one
+            # ✅ Download songs one by one
             for idx, song in enumerate(songs, 1):
                 if self._listener.is_cancelled:
                     LOGGER.info(f"Download cancelled by user at {idx}/{len(songs)}")
@@ -261,7 +225,7 @@ class SpotdlHelper:
             
             LOGGER.info(f"Download complete: {self.playlist_count}/{len(songs)} songs downloaded")
             
-            # Chamar on_download_complete SOMENTE se baixou algo
+            # ✅ Chamar on_download_complete SOMENTE se baixou algo
             if self.playlist_count > 0:
                 async_to_sync(self._listener.on_download_complete)
             else:
@@ -272,8 +236,12 @@ class SpotdlHelper:
             if not self._listener.is_cancelled:
                 self._on_download_error(str(e))
         finally:
-            # ✅ SEMPRE limpar cliente após download
-            self._cleanup_client()
+            # ✅ CORREÇÃO 1: Limpar cliente após uso
+            if self.spotdl_client:
+                with suppress(Exception):
+                    # Cleanup do cliente
+                    self.spotdl_client = None
+                    LOGGER.info("Spotdl client cleaned up")
 
     async def add_download(self, path):
         self._gid = token_hex(5)
@@ -320,6 +288,8 @@ class SpotdlHelper:
         LOGGER.info(f"Cancelling Spotify Download: {self._listener.name}")
         
         # Cleanup client
-        self._cleanup_client()
+        if self.spotdl_client:
+            with suppress(Exception):
+                self.spotdl_client = None
         
         await self._listener.on_download_error("Stopped by User!")
