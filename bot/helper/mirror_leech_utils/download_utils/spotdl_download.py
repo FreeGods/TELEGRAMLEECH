@@ -1,5 +1,5 @@
 from logging import getLogger
-from os import path as ospath, makedirs
+from os import path as ospath, makedirs, getcwd, chdir
 from secrets import token_hex
 from contextlib import suppress
 from shutil import rmtree
@@ -249,7 +249,21 @@ class SpotdlHelper:
                     LOGGER.info(f"[{idx}/{len(songs)}] Downloading: {song.name}")
                     
                     # Download individual song
-                    result, error = self.spotdl_client.downloader.download_song(song)
+                    try:
+                        result, error = self.spotdl_client.downloader.download_song(
+                            song, output=output_path
+                        )
+                    except TypeError:
+                        # Older/newer spotdl API might not accept output arg;
+                        # fallback: temporarily change cwd to output_path
+                        prev_cwd = getcwd()
+                        try:
+                            chdir(output_path)
+                            result, error = self.spotdl_client.downloader.download_song(
+                                song
+                            )
+                        finally:
+                            chdir(prev_cwd)
                     
                     if result:
                         self.playlist_count += 1
@@ -265,7 +279,20 @@ class SpotdlHelper:
                 return
             
             LOGGER.info(f"Download complete: {self.playlist_count}/{len(songs)} songs downloaded")
-            
+            # Log contents of expected output directories for debugging
+            try:
+                if ospath.exists(output_path):
+                    files = [f for f in __import__("os").listdir(output_path)]
+                    LOGGER.info(f"Files in output_path ({output_path}): {files}")
+                else:
+                    LOGGER.info(f"Expected output_path does not exist: {output_path}")
+                if ospath.exists(path):
+                    root_files = [f for f in __import__("os").listdir(path)]
+                    LOGGER.info(f"Files in path ({path}): {root_files}")
+                else:
+                    LOGGER.info(f"Expected path does not exist: {path}")
+            except Exception as e:
+                LOGGER.warning(f"Could not list download dirs for debug: {e}")
             # ✅ Chamar on_download_complete SOMENTE se baixou algo
             if self.playlist_count > 0:
                 async_to_sync(self._listener.on_download_complete)
