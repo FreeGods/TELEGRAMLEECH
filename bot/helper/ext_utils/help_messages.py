@@ -308,6 +308,22 @@ YT_HELP_DICT = {
     "Metadata": metadata,
 }
 
+SPOTDL_HELP = """<b>Spotdl</b>:
+
+Download Spotify track/album/playlist links using spotdl.
+
+Usage:
+/spotdl <spotify_link>
+Options: -n name -m folder -z (zip) -b (bulk) -i (multi)
+"""
+
+SPOTDL_HELP_DICT = {
+    "main": SPOTDL_HELP,
+    "New-Name": f"{new_name}\nNote: Don't add file extension",
+    "Bulk": bulk,
+    "Thumb": thumb,
+}
+
 MIRROR_HELP_DICT = {
     "main": mirror,
     "New-Name": new_name,
@@ -405,6 +421,8 @@ def get_bot_commands():
         "IMDB": "[query] or ttxxxxxx Get IMDB info",
         "CancelAll": "Cancel all Tasks on the Bot",
         "Help": "Detailed help usage of the WZ Bot",
+        "Spotdl": "[link] Download Spotify track/playlist (spotdl)",
+        "SpotdlLeech": "[link] Leech Spotify track/playlist to Telegram",
         "BotSet": "[SUDO] Bot Management Settings",
         "Log": "[SUDO] Get Bot Logs for Internal Working",
         "Restart": "[SUDO] Reboot bot",
@@ -510,6 +528,10 @@ def get_help_string():
             help_lines.append(
                 f"{cmd_str}: Check how long it takes to Ping the Bot (Only Owner & Sudo)."
             )
+        elif key == "Spotdl":
+            help_lines.append(f"{cmd_str}: Download Spotify track/album/playlist using spotdl.")
+        elif key == "SpotdlLeech":
+            help_lines.append(f"{cmd_str}: Leech Spotify track/album/playlist to Telegram.")
         elif key == "Authorize":
             help_lines.append(
                 f"{cmd_str}: Authorize a chat or a user to use the bot (Only Owner & Sudo)."

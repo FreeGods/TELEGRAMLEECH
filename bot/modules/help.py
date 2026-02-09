@@ -3,6 +3,7 @@ from ..helper.ext_utils.help_messages import (
     YT_HELP_DICT,
     MIRROR_HELP_DICT,
     CLONE_HELP_DICT,
+    SPOTDL_HELP_DICT,
 )
 from ..helper.telegram_helper.button_build import ButtonMaker
 from ..helper.telegram_helper.message_utils import (
@@ -34,6 +35,10 @@ async def arg_usage(_, query):
             await edit_message(
                 message, COMMAND_USAGE["clone"][0], COMMAND_USAGE["clone"][pg_no + 1]
             )
+        elif data[2] == "spotdl":
+            await edit_message(
+                message, COMMAND_USAGE["spotdl"][0], COMMAND_USAGE["spotdl"][pg_no + 1]
+            )
     elif data[1] == "pre":
         if data[2] == "mirror":
             await edit_message(
@@ -47,6 +52,10 @@ async def arg_usage(_, query):
             await edit_message(
                 message, COMMAND_USAGE["clone"][0], COMMAND_USAGE["clone"][pg_no + 1]
             )
+        elif data[2] == "spotdl":
+            await edit_message(
+                message, COMMAND_USAGE["spotdl"][0], COMMAND_USAGE["spotdl"][pg_no + 1]
+            )
     elif data[1] == "back":
         if data[2] == "m":
             await edit_message(
@@ -59,6 +68,10 @@ async def arg_usage(_, query):
         elif data[2] == "c":
             await edit_message(
                 message, COMMAND_USAGE["clone"][0], COMMAND_USAGE["clone"][pg_no + 1]
+            )
+        elif data[2] == "s":
+            await edit_message(
+                message, COMMAND_USAGE["spotdl"][0], COMMAND_USAGE["spotdl"][pg_no + 1]
             )
     elif data[1] == "mirror":
         buttons = ButtonMaker()
@@ -75,6 +88,11 @@ async def arg_usage(_, query):
         buttons.data_button("Back", f"help back c {pg_no}")
         button = buttons.build_menu()
         await edit_message(message, CLONE_HELP_DICT[data[2]], button)
+    elif data[1] == "spotdl":
+        buttons = ButtonMaker()
+        buttons.data_button("Back", f"help back s {pg_no}")
+        button = buttons.build_menu()
+        await edit_message(message, SPOTDL_HELP_DICT[data[2]], button)
 
 
 @new_task
