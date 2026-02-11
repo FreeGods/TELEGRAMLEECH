@@ -383,6 +383,9 @@ async def edit_variable(_, message, pre_message, key):
         await rclone_serve_booter()
     elif key in ["JD_EMAIL", "JD_PASS"]:
         await jdownloader.boot()
+    elif key in ["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]:
+        from ..helper.mirror_leech_utils.download_utils.spotdl_download import reset_spotdl_client
+        reset_spotdl_client()
     elif key == "RSS_DELAY":
         add_job()
     elif key == "USET_SERVERS":

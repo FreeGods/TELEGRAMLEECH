@@ -38,12 +38,16 @@ def get_spotdl_client(ffmpeg=None, bitrate="320k", fmt="mp3", threads=4):
         if _GLOBAL_SPOTDL_CLIENT is not None:
             return _GLOBAL_SPOTDL_CLIENT
 
+        # Get Spotify credentials from config if available
+        client_id = Config.SPOTIFY_CLIENT_ID or None
+        client_secret = Config.SPOTIFY_CLIENT_SECRET or None
+
         # Try a couple times in case of race conditions inside external lib
         for attempt in range(3):
             try:
                 client = Spotdl(
-                    client_id=None,
-                    client_secret=None,
+                    client_id=client_id,
+                    client_secret=client_secret,
                     headless=True,
                     downloader_settings={
                         "ffmpeg": ffmpeg or get_ffmpeg_path(),
@@ -68,6 +72,15 @@ def get_spotdl_client(ffmpeg=None, bitrate="320k", fmt="mp3", threads=4):
         # Final check
         if _GLOBAL_SPOTDL_CLIENT is None:
             raise RuntimeError("Unable to initialize spotdl client")
+
+
+def reset_spotdl_client():
+    """Reset the global Spotdl client to reinitialize with new credentials"""
+    global _GLOBAL_SPOTDL_CLIENT
+    with _GLOBAL_SPOTDL_LOCK:
+        if _GLOBAL_SPOTDL_CLIENT is not None:
+            _GLOBAL_SPOTDL_CLIENT = None
+            LOGGER.info("Spotdl client reset. Will reinitialize on next use.")
 
 
 def get_ffmpeg_path():
