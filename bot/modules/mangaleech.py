@@ -4,6 +4,7 @@ Handles /mangaleech command with source selection, search, and chapter range dow
 """
 
 import asyncio
+import re
 from functools import partial
 from time import time
 
@@ -67,12 +68,12 @@ async def manga_source_callback(client, query):
     """Handle source selection callback"""
     user_id = query.from_user.id
     data_parts = query.data.split("_")
-    
+
     if len(data_parts) < 4:
         await query.answer("❌ Erro ao processar", show_alert=True)
         return
-    
-    source = data_parts[3]
+
+    source = data_parts[-1]
     
     if source == "cancel":
         await query.answer()
@@ -111,7 +112,7 @@ async def manga_mode_callback(client, query):
         await query.answer("❌ Erro ao processar", show_alert=True)
         return
     
-    mode = data_parts[3]
+    mode = data_parts[-1]
     
     if mode == "cancel":
         await query.answer()
@@ -197,11 +198,18 @@ async def manga_input_handler(client, message):
             manga_user_state[user_id]["selected_url"] = selected_url
             
         elif mode == "link":
-            # Validate link
-            if not user_input.startswith("https://flowermangas.net/manga/"):
+            # Validate and normalize link (accept http/https and optional www)
+            if re.search(r"https?://(?:www\.)?flowermangas\.net/manga/", user_input):
+                normalized = user_input
+            elif user_input.startswith("www.flowermangas.net/manga/"):
+                normalized = f"https://{user_input}"
+            elif user_input.startswith("flowermangas.net/manga/"):
+                normalized = f"https://{user_input}"
+            else:
                 await send_message(message, "❌ Link inválido. Use um link de https://flowermangas.net/manga/")
                 return
-            selected_url = user_input if user_input.endswith("/") else user_input + "/"
+
+            selected_url = normalized if normalized.endswith("/") else normalized + "/"
             manga_user_state[user_id]["selected_url"] = selected_url
         
         # Ensure we have a selected URL
