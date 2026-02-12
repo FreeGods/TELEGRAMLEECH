@@ -4,7 +4,9 @@ Handles /mangaleech command with source selection, search, and chapter range dow
 """
 
 import asyncio
+import os
 import re
+import shutil
 from functools import partial
 from time import time
 
@@ -18,14 +20,18 @@ from ..helper.ext_utils.mangaflower_utils import (
     MangaFlowerDownloader,
     parse_chapter_range,
 )
-from ..helper.ext_utils.status_utils import get_readable_file_size
+from ..helper.ext_utils.status_utils import (
+    get_readable_file_size,
+    get_progress_bar_string,
+)
 from ..helper.telegram_helper.button_build import ButtonMaker
 from ..helper.telegram_helper.message_utils import (
     edit_message,
     send_message,
+    send_file,
 )
 from ..helper.telegram_helper.bot_commands import BotCommands
-from aiofiles.os import path as aiopath
+from aiofiles.os import path as aiopath, remove as aio_remove
 
 # Global state to track user interactions
 manga_user_state = {}
@@ -355,17 +361,37 @@ async def _handle_chapter_input(client, message, user_id, state):
                 await send_message(message, "❌ Formato inválido. Use: 1-5, 10, 15-20 ou 'todos'")
                 return
         
-        # Start download
+        # Start download with progress
         download_msg = await send_message(message, "⏳ Iniciando download dos capítulos...")
         
-        results = await downloader.download_range(
-            selected_url,
-            start,
-            end,
-            f"{DOWNLOAD_DIR}/manga",
-        )
+        # Filter chapters in range
+        selected_chapters = [
+            cap for cap in chapters
+            if start <= downloader._extract_chapter_number(cap) <= end
+        ]
+        
+        results = []
+        for idx, chapter_url in enumerate(selected_chapters, 1):
+            # Update progress
+            progress_pct = int((idx / len(selected_chapters)) * 100)
+            progress_bar = get_progress_bar_string(f"{progress_pct}%")
+            chapter_num = chapter_url.split("capitulo-")[1].rstrip("/")
+            
+            progress_msg = f"⏳ <b>Baixando capítulos...</b>\n\n{progress_bar} {progress_pct}%\n\n"
+            progress_msg += f"📥 Capítulo {chapter_num} ({idx}/{len(selected_chapters)})"
+            
+            await edit_message(download_msg, progress_msg)
+            
+            cbz_path, page_count = await downloader.download_chapter(
+                chapter_url,
+                f"{DOWNLOAD_DIR}/manga",
+            )
+            
+            if cbz_path:
+                results.append((cbz_path, page_count))
         
         if results:
+            # Show completion message
             msg = "✅ <b>Download concluído!</b>\n\n"
             total_size = 0
             for filepath, pages in results:
@@ -376,6 +402,57 @@ async def _handle_chapter_input(client, message, user_id, state):
             
             msg += f"\n<b>Total:</b> {len(results)} capítulos | {get_readable_file_size(total_size)}"
             await edit_message(download_msg, msg)
+            
+            # Send files to Telegram
+            send_msg = await send_message(message, "📤 Enviando capítulos para Telegram...")
+            
+            for idx, (filepath, pages) in enumerate(results, 1):
+                try:
+                    chapter_name = filepath.split("/")[-1]
+                    # Update sending progress
+                    sending_pct = int((idx / len(results)) * 100)
+                    sending_bar = get_progress_bar_string(f"{sending_pct}%")
+                    
+                    sending_info = f"📤 Enviando: {sending_bar} {sending_pct}%\n{idx}/{len(results)} - {chapter_name}"
+                    await edit_message(send_msg, sending_info)
+                    
+                    # Send the file
+                    caption = f"📖 {chapter_name}\n📄 {pages} páginas"
+                    await send_file(message, filepath, caption=caption)
+                    
+                    # Delete file after successful send
+                    try:
+                        await aio_remove(filepath)
+                        LOGGER.info(f"Deleted: {filepath}")
+                    except Exception as del_e:
+                        LOGGER.warning(f"Could not delete {filepath}: {del_e}")
+                    
+                except Exception as e:
+                    LOGGER.error(f"Error sending file {filepath}: {e}")
+                    await send_message(message, f"⚠️ Erro ao enviar {chapter_name}: {str(e)[:100]}")
+            
+            # Final message
+            await edit_message(send_msg, "✅ <b>Todos os capítulos foram enviados!</b>")
+            
+            # Cleanup destination folder
+            manga_dir = f"{DOWNLOAD_DIR}/manga"
+            try:
+                if await aiopath.exists(manga_dir):
+                    # Remove remaining files
+                    for root, dirs, files in os.walk(manga_dir, topdown=False):
+                        for file in files:
+                            try:
+                                await aio_remove(os.path.join(root, file))
+                            except:
+                                pass
+                    # Remove empty directories
+                    try:
+                        shutil.rmtree(manga_dir)
+                        LOGGER.info(f"Cleaned up manga directory: {manga_dir}")
+                    except:
+                        pass
+            except Exception as cleanup_e:
+                LOGGER.warning(f"Could not cleanup {manga_dir}: {cleanup_e}")
         else:
             await edit_message(download_msg, "❌ Erro ao baixar capítulos.")
         
