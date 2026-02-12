@@ -413,12 +413,7 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         MessageHandler(
-            manga_input_handler,
-        )
-    )
-    TgClient.bot.add_handler(
-        MessageHandler(
-            manga_chapter_input_handler,
+            manga_message_handler,
         )
     )
     if Config.SET_COMMANDS:

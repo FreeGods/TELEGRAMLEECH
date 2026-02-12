@@ -43,8 +43,7 @@ from .mangaleech import (
     manga_source_callback,
     manga_mode_callback,
     manga_result_callback,
-    manga_input_handler,
-    manga_chapter_input_handler,
+    manga_message_handler,
 )
 
 __all__ = [
@@ -115,6 +114,5 @@ __all__ = [
     "manga_source_callback",
     "manga_mode_callback",
     "manga_result_callback",
-    "manga_input_handler",
-    "manga_chapter_input_handler",
+    "manga_message_handler",
 ]

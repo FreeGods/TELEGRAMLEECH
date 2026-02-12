@@ -141,20 +141,27 @@ async def manga_mode_callback(client, query):
 
 
 @new_task 
-async def manga_input_handler(client, message):
-    """Handle user text input for manga search/link"""
+async def manga_message_handler(client, message):
+    """Handle user text input for manga (search, link, chapters)"""
     user_id = message.from_user.id
     
     if user_id not in manga_user_state:
         return
     
     state = manga_user_state[user_id]
-    
-    # Only handle inputs when we're explicitly waiting for a link or search term
     stage = state.get("stage", "")
-    if stage not in ("waiting_search", "waiting_link"):
-        return
     
+    # Route based on current stage
+    if stage in ("waiting_search", "waiting_link"):
+        await _handle_search_link_input(client, message, user_id, state, stage)
+    elif stage == "waiting_chapters":
+        await _handle_chapter_input(client, message, user_id, state)
+    else:
+        return
+
+
+async def _handle_search_link_input(client, message, user_id, state, stage):
+    """Handle search or link input"""
     mode = state.get("mode", "search")
     user_input = message.text.strip()
     downloader = state.get("downloader")
@@ -256,7 +263,7 @@ async def manga_input_handler(client, message):
         manga_user_state[user_id]["last_message"] = info_msg
         
     except Exception as e:
-        LOGGER.error(f"Error in manga_input_handler: {e}")
+        LOGGER.error(f"Error in _handle_search_link_input: {e}")
         await send_message(message, f"❌ Erro: {str(e)[:200]}")
         if user_id in manga_user_state:
             del manga_user_state[user_id]
@@ -326,19 +333,8 @@ async def manga_result_callback(client, query):
             del manga_user_state[user_id]
 
 
-@new_task
-async def manga_chapter_input_handler(client, message):
+async def _handle_chapter_input(client, message, user_id, state):
     """Handle chapter range input"""
-    user_id = message.from_user.id
-    
-    if user_id not in manga_user_state:
-        return
-    
-    state = manga_user_state[user_id]
-    
-    if state.get("stage") != "waiting_chapters":
-        return
-    
     user_input = message.text.strip()
     downloader = state.get("downloader")
     chapters = state.get("chapters", [])
@@ -387,7 +383,7 @@ async def manga_chapter_input_handler(client, message):
         del manga_user_state[user_id]
         
     except Exception as e:
-        LOGGER.error(f"Error in manga_chapter_input_handler: {e}")
+        LOGGER.error(f"Error in _handle_chapter_input: {e}")
         await send_message(message, f"❌ Erro: {str(e)[:200]}")
         if user_id in manga_user_state:
             del manga_user_state[user_id]
