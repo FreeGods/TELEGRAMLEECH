@@ -40,8 +40,8 @@ async def mangaleech(client, message):
     try:
         # Step 1: Source selection
         buttons = ButtonMaker()
-        buttons.ibutton("🌸 Flower Mangas", f"manga_flow_{user_id}_source_flower")
-        buttons.ibutton("❌ Cancelar", f"manga_flow_{user_id}_cancel")
+        buttons.data_button("🌸 Flower Mangas", f"manga_flow_{user_id}_source_flower")
+        buttons.data_button("❌ Cancelar", f"manga_flow_{user_id}_cancel")
 
         reply = await send_message(
             message,
@@ -85,9 +85,9 @@ async def manga_source_callback(client, query):
     
     # Step 2: Input mode selection  
     buttons = ButtonMaker()
-    buttons.ibutton("🔗 Link direto", f"manga_flow_{user_id}_mode_link")
-    buttons.ibutton("🔍 Pesquisar", f"manga_flow_{user_id}_mode_search")
-    buttons.ibutton("❌ Cancelar", f"manga_flow_{user_id}_cancel")
+    buttons.data_button("🔗 Link direto", f"manga_flow_{user_id}_mode_link")
+    buttons.data_button("🔍 Pesquisar", f"manga_flow_{user_id}_mode_search")
+    buttons.data_button("❌ Cancelar", f"manga_flow_{user_id}_cancel")
 
     await edit_message(
         query.message,
@@ -178,8 +178,8 @@ async def manga_input_handler(client, message):
                 # Show results
                 buttons = ButtonMaker()
                 for i, result in enumerate(results[:10]):
-                    buttons.ibutton(f"📖 {result['title'][:35]}", f"manga_flow_{user_id}_result_{i}")
-                buttons.ibutton("❌ Cancelar", f"manga_flow_{user_id}_cancel")
+                    buttons.data_button(f"📖 {result['title'][:35]}", f"manga_flow_{user_id}_result_{i}")
+                buttons.data_button("❌ Cancelar", f"manga_flow_{user_id}_cancel")
                 
                 await edit_message(
                     loading_msg,
@@ -274,7 +274,7 @@ async def manga_result_callback(client, query):
     
     try:
         # Get chapters
-        info_msg = await send_message(query.message.chat, "📊 Carregando capítulos...")
+        info_msg = await send_message(query.message.chat.id, "📊 Carregando capítulos...")
         chapters = await downloader.list_chapters(selected_url)
         info = await downloader.get_manga_info(selected_url)
         
@@ -302,7 +302,7 @@ async def manga_result_callback(client, query):
         
     except Exception as e:
         LOGGER.error(f"Error in manga_result_callback: {e}")
-        await send_message(query.message.chat, f"❌ Erro: {str(e)[:200]}")
+        await send_message(query.message.chat.id, f"❌ Erro: {str(e)[:200]}")
         if user_id in manga_user_state:
             del manga_user_state[user_id]
 
