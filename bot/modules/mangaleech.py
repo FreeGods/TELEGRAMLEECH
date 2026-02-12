@@ -150,7 +150,9 @@ async def manga_input_handler(client, message):
     
     state = manga_user_state[user_id]
     
-    if not state.get("stage", "").startswith("waiting_"):
+    # Only handle inputs when we're explicitly waiting for a link or search term
+    stage = state.get("stage", "")
+    if stage not in ("waiting_search", "waiting_link"):
         return
     
     mode = state.get("mode", "search")
