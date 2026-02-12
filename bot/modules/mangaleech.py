@@ -1,0 +1,374 @@
+"""
+Manga Leech Command Module
+Handles /mangaleech command with source selection, search, and chapter range downloads
+"""
+
+import asyncio
+from functools import partial
+from time import time
+
+from pyrogram.filters import regex, user, command
+from pyrogram.handlers import CallbackQueryHandler, MessageHandler
+
+from .. import DOWNLOAD_DIR, LOGGER
+from ..core.config_manager import Config
+from ..helper.ext_utils.bot_utils import new_task
+from ..helper.ext_utils.mangaflower_utils import (
+    MangaFlowerDownloader,
+    parse_chapter_range,
+)
+from ..helper.ext_utils.status_utils import get_readable_file_size
+from ..helper.telegram_helper.button_build import ButtonMaker
+from ..helper.telegram_helper.message_utils import (
+    edit_message,
+    send_message,
+)
+from ..helper.telegram_helper.bot_commands import BotCommands
+from aiofiles.os import path as aiopath
+
+# Global state to track user interactions
+manga_user_state = {}
+
+
+@new_task
+async def mangaleech(client, message):
+    """Handle /mangaleech command"""
+    user = message.from_user
+    user_id = user.id if user else 0
+    downloader = MangaFlowerDownloader(logger=LOGGER)
+
+    try:
+        # Step 1: Source selection
+        buttons = ButtonMaker()
+        buttons.ibutton("🌸 Flower Mangas", f"manga_flow_{user_id}_source_flower")
+        buttons.ibutton("❌ Cancelar", f"manga_flow_{user_id}_cancel")
+
+        reply = await send_message(
+            message,
+            "📚 Escolha a fonte de mangá:",
+            buttons.build_menu(1),
+        )
+        
+        # Store state
+        manga_user_state[user_id] = {
+            "stage": "source_selected",
+            "message_id": reply.id,
+            "downloader": downloader,
+            "last_message": reply,
+        }
+
+    except Exception as e:
+        LOGGER.error(f"Error in mangaleech: {e}")
+        await send_message(message, f"❌ Erro: {str(e)[:200]}")
+
+
+@new_task
+async def manga_source_callback(client, query):
+    """Handle source selection callback"""
+    user_id = query.from_user.id
+    data_parts = query.data.split("_")
+    
+    if len(data_parts) < 4:
+        await query.answer("❌ Erro ao processar", show_alert=True)
+        return
+    
+    source = data_parts[3]
+    
+    if source == "cancel":
+        await query.answer()
+        await edit_message(query.message, "❌ Comando cancelado.")
+        if user_id in manga_user_state:
+            del manga_user_state[user_id]
+        return
+    
+    await query.answer()
+    
+    # Step 2: Input mode selection  
+    buttons = ButtonMaker()
+    buttons.ibutton("🔗 Link direto", f"manga_flow_{user_id}_mode_link")
+    buttons.ibutton("🔍 Pesquisar", f"manga_flow_{user_id}_mode_search")
+    buttons.ibutton("❌ Cancelar", f"manga_flow_{user_id}_cancel")
+
+    await edit_message(
+        query.message,
+        "🎯 Como você deseja adicionar o mangá?",
+        buttons.build_menu(1),
+    )
+    
+    if user_id in manga_user_state:
+        manga_user_state[user_id]["stage"] = "mode_selected"
+        manga_user_state[user_id]["source"] = source
+        manga_user_state[user_id]["last_message"] = query.message
+
+
+@new_task
+async def manga_mode_callback(client, query):
+    """Handle input mode selection callback"""
+    user_id = query.from_user.id
+    data_parts = query.data.split("_")
+    
+    if len(data_parts) < 4:
+        await query.answer("❌ Erro ao processar", show_alert=True)
+        return
+    
+    mode = data_parts[3]
+    
+    if mode == "cancel":
+        await query.answer()
+        await edit_message(query.message, "❌ Comando cancelado.")
+        if user_id in manga_user_state:
+            del manga_user_state[user_id]
+        return
+    
+    await query.answer()
+    
+    if mode == "link":
+        await edit_message(
+            query.message,
+            "🔗 Envie o link do mangá:\n(exemplo: https://flowermangas.net/manga/solo-leveling/)",
+        )
+    elif mode == "search":
+        await edit_message(
+            query.message,
+            "🔍 Envie o nome do mangá que deseja procurar:",
+        )
+    
+    if user_id in manga_user_state:
+        manga_user_state[user_id]["stage"] = f"waiting_{mode}"
+        manga_user_state[user_id]["mode"] = mode
+        manga_user_state[user_id]["last_message"] = query.message
+
+
+@new_task 
+async def manga_input_handler(client, message):
+    """Handle user text input for manga search/link"""
+    user_id = message.from_user.id
+    
+    if user_id not in manga_user_state:
+        return
+    
+    state = manga_user_state[user_id]
+    
+    if not state.get("stage", "").startswith("waiting_"):
+        return
+    
+    mode = state.get("mode", "search")
+    user_input = message.text.strip()
+    downloader = state.get("downloader")
+    
+    if not downloader:
+        await send_message(message, "❌ Erro de configuração.")
+        return
+    
+    try:
+        if mode == "search":
+            # Search for manga
+            loading_msg = await send_message(message, "🔍 Pesquisando...")
+            results = await downloader.search(user_input)
+            
+            if not results:
+                await edit_message(loading_msg, "❌ Nenhum resultado encontrado.")
+                del manga_user_state[user_id]
+                return
+            
+            if len(results) == 1:
+                # Auto-select
+                selected_url = results[0]["url"]
+            else:
+                # Show results
+                buttons = ButtonMaker()
+                for i, result in enumerate(results[:10]):
+                    buttons.ibutton(f"📖 {result['title'][:35]}", f"manga_flow_{user_id}_result_{i}")
+                buttons.ibutton("❌ Cancelar", f"manga_flow_{user_id}_cancel")
+                
+                await edit_message(
+                    loading_msg,
+                    f"📚 Encontrados {len(results)} resultado(s):",
+                    buttons.build_menu(1),
+                )
+                
+                manga_user_state[user_id]["stage"] = "selecting_result"
+                manga_user_state[user_id]["search_results"] = results
+                manga_user_state[user_id]["last_message"] = loading_msg
+                return
+            
+            manga_user_state[user_id]["selected_url"] = selected_url
+            
+        elif mode == "link":
+            # Validate link
+            if not user_input.startswith("https://flowermangas.net/manga/"):
+                await send_message(message, "❌ Link inválido. Use um link de https://flowermangas.net/manga/")
+                return
+            selected_url = user_input if user_input.endswith("/") else user_input + "/"
+            manga_user_state[user_id]["selected_url"] = selected_url
+        
+        # Get manga info and chapters
+        info_msg = await send_message(message, "📊 Carregando informações do mangá...")
+        chapters = await downloader.list_chapters(selected_url)
+        
+        if not chapters:
+            await edit_message(info_msg, "❌ Nenhum capítulo encontrado no link.")
+            del manga_user_state[user_id]
+            return
+        
+        info = await downloader.get_manga_info(selected_url)
+        
+        # Build info message
+        msg = f"📖 <b>{info.get('title', 'Desconhecido')}</b>\n\n"
+        msg += f"📊 <b>Total de capítulos:</b> {len(chapters)}\n"
+        
+        first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
+        last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        msg += f"📍 <b>De:</b> Capítulo {first_cap}\n"
+        msg += f"📍 <b>Até:</b> Capítulo {last_cap}\n\n"
+        
+        if info.get("description"):
+            desc = info["description"][:200]
+            msg += f"📝 {desc}\n\n" if len(desc) == 200 else f"📝 {desc}\n\n"
+        
+        msg += "📌 <b>Digite o intervalo de capítulos:</b>\n"
+        msg += "(ex: 1-5, 10, 15-20)\n\n"
+        msg += "<i>ou use 'todos' para baixar todos os capítulos</i>"
+        
+        await edit_message(info_msg, msg)
+        
+        manga_user_state[user_id]["stage"] = "waiting_chapters"
+        manga_user_state[user_id]["chapters"] = chapters
+        manga_user_state[user_id]["last_message"] = info_msg
+        
+    except Exception as e:
+        LOGGER.error(f"Error in manga_input_handler: {e}")
+        await send_message(message, f"❌ Erro: {str(e)[:200]}")
+        if user_id in manga_user_state:
+            del manga_user_state[user_id]
+
+
+@new_task
+async def manga_result_callback(client, query):
+    """Handle manga search result selection"""
+    user_id = query.from_user.id
+    data_parts = query.data.split("_")
+    
+    if len(data_parts) < 5:
+        await query.answer("❌ Erro ao processar", show_alert=True)
+        return
+    
+    result_idx = int(data_parts[4])
+    
+    if user_id not in manga_user_state:
+        await query.answer("❌ Sessão expirada", show_alert=True)
+        return
+    
+    state = manga_user_state[user_id]
+    results = state.get("search_results", [])
+    
+    if result_idx >= len(results):
+        await query.answer("❌ Resultado inválido", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    selected_url = results[result_idx]["url"]
+    manga_user_state[user_id]["selected_url"] = selected_url
+    downloader = state.get("downloader")
+    
+    try:
+        # Get chapters
+        info_msg = await send_message(query.message.chat, "📊 Carregando capítulos...")
+        chapters = await downloader.list_chapters(selected_url)
+        info = await downloader.get_manga_info(selected_url)
+        
+        # Build info message
+        msg = f"📖 <b>{info.get('title', 'Desconhecido')}</b>\n\n"
+        msg += f"📊 <b>Total de capítulos:</b> {len(chapters)}\n"
+        
+        first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
+        last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        msg += f"📍 <b>De:</b> Capítulo {first_cap}\n"
+        msg += f"📍 <b>Até:</b> Capítulo {last_cap}\n\n"
+        
+        if info.get("description"):
+            desc = info["description"][:200]
+            msg += f"📝 {desc}\n\n" if len(desc) == 200 else f"📝 {desc}\n\n"
+        
+        msg += "📌 <b>Digite o intervalo de capítulos:</b>\n"
+        msg += "(ex: 1-5, 10, 15-20)"
+        
+        await edit_message(info_msg, msg)
+        
+        manga_user_state[user_id]["stage"] = "waiting_chapters"
+        manga_user_state[user_id]["chapters"] = chapters
+        manga_user_state[user_id]["last_message"] = info_msg
+        
+    except Exception as e:
+        LOGGER.error(f"Error in manga_result_callback: {e}")
+        await send_message(query.message.chat, f"❌ Erro: {str(e)[:200]}")
+        if user_id in manga_user_state:
+            del manga_user_state[user_id]
+
+
+@new_task
+async def manga_chapter_input_handler(client, message):
+    """Handle chapter range input"""
+    user_id = message.from_user.id
+    
+    if user_id not in manga_user_state:
+        return
+    
+    state = manga_user_state[user_id]
+    
+    if state.get("stage") != "waiting_chapters":
+        return
+    
+    user_input = message.text.strip()
+    downloader = state.get("downloader")
+    chapters = state.get("chapters", [])
+    selected_url = state.get("selected_url")
+    
+    if not all([downloader, chapters, selected_url]):
+        await send_message(message, "❌ Erro de configuração.")
+        del manga_user_state[user_id]
+        return
+    
+    try:
+        # Parse chapter range
+        if user_input.lower() == "todos":
+            start, end = 0, float('inf')
+        else:
+            start, end = parse_chapter_range(user_input)
+            if start is None:
+                await send_message(message, "❌ Formato inválido. Use: 1-5, 10, 15-20 ou 'todos'")
+                return
+        
+        # Start download
+        download_msg = await send_message(message, "⏳ Iniciando download dos capítulos...")
+        
+        results = await downloader.download_range(
+            selected_url,
+            start,
+            end,
+            f"{DOWNLOAD_DIR}/manga",
+        )
+        
+        if results:
+            msg = "✅ <b>Download concluído!</b>\n\n"
+            total_size = 0
+            for filepath, pages in results:
+                size = await aiopath.getsize(filepath)
+                total_size += size
+                chapter_name = filepath.split("/")[-1].replace(".cbz", "")
+                msg += f"📦 {chapter_name}\n   {pages} páginas | {get_readable_file_size(size)}\n"
+            
+            msg += f"\n<b>Total:</b> {len(results)} capítulos | {get_readable_file_size(total_size)}"
+            await edit_message(download_msg, msg)
+        else:
+            await edit_message(download_msg, "❌ Erro ao baixar capítulos.")
+        
+        # Clean up state
+        del manga_user_state[user_id]
+        
+    except Exception as e:
+        LOGGER.error(f"Error in manga_chapter_input_handler: {e}")
+        await send_message(message, f"❌ Erro: {str(e)[:200]}")
+        if user_id in manga_user_state:
+            del manga_user_state[user_id]

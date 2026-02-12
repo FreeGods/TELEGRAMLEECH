@@ -406,6 +406,7 @@ def get_bot_commands():
         "Leech": "[link/file] Leech files to Upload to Telegram",
         "QbLeech": "[magnet/torrent] Leech files to Upload to Telegram using qbit",
         "YtdlLeech": "[link] Leech YouTube, m3u8, Social Media and yt-dlp supported urls",
+        "MangaLeech": "[link/search] Leech Manga from Flower Mangas",
         "Clone": "[link] Clone files/folders to GDrive",
         "UserSet": "User personal settings",
         "ForceStart": "[gid/reply] Force start from queued task",
@@ -486,6 +487,8 @@ def get_help_string():
             help_lines.append(f"{cmd_str}: Start leeching using Sabnzbd.")
         elif key == "YtdlLeech":
             help_lines.append(f"{cmd_str}: Leech yt-dlp supported link.")
+        elif key == "MangaLeech":
+            help_lines.append(f"{cmd_str}: Leech manga from Flower Mangas (search or direct link).")
         elif key == "Clone":
             help_lines.append(
                 f"{cmd_str} [drive_url]: Copy file/folder to Google Drive."

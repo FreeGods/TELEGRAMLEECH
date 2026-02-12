@@ -22,6 +22,7 @@ class BotCommands:
         "JdLeech": ["jdleech", "jl"],
         "YtdlLeech": ["ytdlleech", "yl"],
         "NzbLeech": ["nzbleech", "nl"],
+        "MangaLeech": ["mangaleech", "ml"],
         "Clone": ["clone", "cl"],
         "Count": "count",
         "Delete": "del",

@@ -8,8 +8,20 @@ from ..core.config_manager import Config
 from ..helper.ext_utils.help_messages import BOT_COMMANDS
 from ..helper.telegram_helper.bot_commands import BotCommands
 from ..helper.telegram_helper.filters import CustomFilters
+from ..helper.telegram_helper.message_utils import edit_message
 from ..modules import *
 from .tg_client import TgClient
+
+
+async def handle_manga_cancel(query):
+    """Handle manga flow cancellation"""
+    await query.answer()
+    await edit_message(query.message, "❌ Comando cancelado.")
+    # Clean up state
+    from ..modules.mangaleech import manga_user_state
+    user_id = query.from_user.id
+    if user_id in manga_user_state:
+        del manga_user_state[user_id]
 
 
 def add_handlers():
@@ -369,6 +381,44 @@ def add_handlers():
             hydra_search,
             filters=command(BotCommands.NzbSearchCommand, case_sensitive=True)
             & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            mangaleech,
+            filters=command(BotCommands.MangaLeechCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            manga_source_callback, filters=regex(r"^manga_flow_\d+_source")
+        )
+    )
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            manga_mode_callback, filters=regex(r"^manga_flow_\d+_mode")
+        )
+    )
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            manga_result_callback, filters=regex(r"^manga_flow_\d+_result")
+        )
+    )
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            lambda client, query: handle_manga_cancel(query),
+            filters=regex(r"^manga_flow_\d+_cancel"),
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            manga_input_handler,
+        )
+    )
+    TgClient.bot.add_handler(
+        MessageHandler(
+            manga_chapter_input_handler,
         )
     )
     if Config.SET_COMMANDS:
