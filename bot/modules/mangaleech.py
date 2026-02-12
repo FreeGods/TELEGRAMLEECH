@@ -161,6 +161,8 @@ async def manga_input_handler(client, message):
         return
     
     try:
+        selected_url = None
+
         if mode == "search":
             # Search for manga
             loading_msg = await send_message(message, "🔍 Pesquisando...")
@@ -202,6 +204,13 @@ async def manga_input_handler(client, message):
             selected_url = user_input if user_input.endswith("/") else user_input + "/"
             manga_user_state[user_id]["selected_url"] = selected_url
         
+        # Ensure we have a selected URL
+        if not selected_url:
+            await send_message(message, "❌ Erro: não foi possível determinar o link do mangá. Por favor, tente novamente.")
+            if user_id in manga_user_state:
+                del manga_user_state[user_id]
+            return
+
         # Get manga info and chapters
         info_msg = await send_message(message, "📊 Carregando informações do mangá...")
         chapters = await downloader.list_chapters(selected_url)

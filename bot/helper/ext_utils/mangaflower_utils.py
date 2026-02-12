@@ -281,7 +281,9 @@ def parse_chapter_range(input_str: str) -> Tuple[Optional[float], Optional[float
                 return None, None
             start = float(parts[0].strip())
             end = float(parts[1].strip())
-            return (start, end) if start <= end else None, None
+            if start <= end:
+                return start, end
+            return None, None
         else:
             num = float(input_str.strip())
             return num, num
