@@ -20,6 +20,8 @@ from ..helper.ext_utils.mangaflower_utils import (
     MangaFlowerDownloader,
     parse_chapter_range,
 )
+from ..helper.ext_utils.ninemanga_utils import NineMangaDownloader
+from ..helper.ext_utils.nexustoons_utils import NexusToonsDownloader
 from ..helper.ext_utils.status_utils import (
     get_readable_file_size,
     get_progress_bar_string,
@@ -42,12 +44,13 @@ async def mangaleech(client, message):
     """Handle /mangaleech command"""
     user = message.from_user
     user_id = user.id if user else 0
-    downloader = MangaFlowerDownloader(logger=LOGGER)
 
     try:
         # Step 1: Source selection
         buttons = ButtonMaker()
         buttons.data_button("🌸 Flower Mangas", f"manga_flow_{user_id}_source_flower")
+        buttons.data_button("🔥 Nine Manga", f"manga_flow_{user_id}_source_nine")
+        buttons.data_button("🌐 Nexus Toons", f"manga_flow_{user_id}_source_nexus")
         buttons.data_button("❌ Cancelar", f"manga_flow_{user_id}_cancel")
 
         reply = await send_message(
@@ -60,7 +63,6 @@ async def mangaleech(client, message):
         manga_user_state[user_id] = {
             "stage": "source_selected",
             "message_id": reply.id,
-            "downloader": downloader,
             "last_message": reply,
         }
 
@@ -90,6 +92,19 @@ async def manga_source_callback(client, query):
     
     await query.answer()
     
+    # Create appropriate downloader based on source
+    if source == "flower":
+        downloader = MangaFlowerDownloader(logger=LOGGER)
+    elif source == "nine":
+        downloader = NineMangaDownloader(logger=LOGGER)
+    elif source == "nexus":
+        downloader = NexusToonsDownloader(logger=LOGGER)
+    else:
+        await edit_message(query.message, "❌ Fonte desconhecida.")
+        if user_id in manga_user_state:
+            del manga_user_state[user_id]
+        return
+    
     # Step 2: Input mode selection  
     buttons = ButtonMaker()
     buttons.data_button("🔗 Link direto", f"manga_flow_{user_id}_mode_link")
@@ -105,6 +120,7 @@ async def manga_source_callback(client, query):
     if user_id in manga_user_state:
         manga_user_state[user_id]["stage"] = "mode_selected"
         manga_user_state[user_id]["source"] = source
+        manga_user_state[user_id]["downloader"] = downloader
         manga_user_state[user_id]["last_message"] = query.message
 
 
@@ -129,10 +145,19 @@ async def manga_mode_callback(client, query):
     
     await query.answer()
     
+    source = manga_user_state.get(user_id, {}).get("source", "flower")
+    
     if mode == "link":
+        if source == "nine":
+            example = "https://br.ninemanga.com/manga/Kimetsu+no+Yaiba.html"
+        elif source == "nexus":
+            example = "https://nexustoons.com/manga/solo-leveling"
+        else:
+            example = "https://flowermangas.net/manga/solo-leveling/"
+        
         await edit_message(
             query.message,
-            "🔗 Envie o link do mangá:\n(exemplo: https://flowermangas.net/manga/solo-leveling/)",
+            f"🔗 Envie o link do mangá:\n(exemplo: {example})",
         )
     elif mode == "search":
         await edit_message(
@@ -171,6 +196,7 @@ async def _handle_search_link_input(client, message, user_id, state, stage):
     mode = state.get("mode", "search")
     user_input = message.text.strip()
     downloader = state.get("downloader")
+    source = state.get("source", "flower")
     
     if not downloader:
         await send_message(message, "❌ Erro de configuração.")
@@ -213,18 +239,53 @@ async def _handle_search_link_input(client, message, user_id, state, stage):
             manga_user_state[user_id]["selected_url"] = selected_url
             
         elif mode == "link":
-            # Validate and normalize link (accept http/https and optional www)
-            if re.search(r"https?://(?:www\.)?flowermangas\.net/manga/", user_input):
-                normalized = user_input
-            elif user_input.startswith("www.flowermangas.net/manga/"):
-                normalized = f"https://{user_input}"
-            elif user_input.startswith("flowermangas.net/manga/"):
-                normalized = f"https://{user_input}"
+            # Validate and normalize link based on source
+            if source == "nine":
+                # Nine Manga validation
+                if re.search(r"https?://(?:www\.)?br\.ninemanga\.com/manga/", user_input):
+                    normalized = user_input
+                elif user_input.startswith("www.br.ninemanga.com/manga/"):
+                    normalized = f"https://{user_input}"
+                elif user_input.startswith("br.ninemanga.com/manga/"):
+                    normalized = f"https://{user_input}"
+                else:
+                    await send_message(message, "❌ Link inválido. Use um link de https://br.ninemanga.com/manga/")
+                    return
+                
+                selected_url = normalized
+            elif source == "nexus":
+                # Nexus Toons validation - extract slug from URL or use slug directly
+                if re.search(r"https?://(?:www\.)?nexustoons\.com/manga/", user_input):
+                    # Full URL - extract slug
+                    slug_match = re.search(r'nexustoons\.com/manga/([^/?]+)', user_input)
+                    selected_url = slug_match.group(1) if slug_match else None
+                elif user_input.startswith("www.nexustoons.com/manga/"):
+                    slug_match = re.search(r'manga/([^/?]+)', user_input)
+                    selected_url = slug_match.group(1) if slug_match else None
+                elif user_input.startswith("nexustoons.com/manga/"):
+                    slug_match = re.search(r'manga/([^/?]+)', user_input)
+                    selected_url = slug_match.group(1) if slug_match else None
+                else:
+                    # Consider as slug directly
+                    selected_url = user_input.strip()
+                
+                if not selected_url or not selected_url.replace("-", "").replace("_", "").isalnum():
+                    await send_message(message, "❌ Link/slug inválido. Use um link de https://nexustoons.com/manga/[nome] ou apenas o nome do mangá (slug)")
+                    return
             else:
-                await send_message(message, "❌ Link inválido. Use um link de https://flowermangas.net/manga/")
-                return
+                # Flower Mangas validation
+                if re.search(r"https?://(?:www\.)?flowermangas\.net/manga/", user_input):
+                    normalized = user_input
+                elif user_input.startswith("www.flowermangas.net/manga/"):
+                    normalized = f"https://{user_input}"
+                elif user_input.startswith("flowermangas.net/manga/"):
+                    normalized = f"https://{user_input}"
+                else:
+                    await send_message(message, "❌ Link inválido. Use um link de https://flowermangas.net/manga/")
+                    return
 
-            selected_url = normalized if normalized.endswith("/") else normalized + "/"
+                selected_url = normalized if normalized.endswith("/") else normalized + "/"
+            
             manga_user_state[user_id]["selected_url"] = selected_url
         
         # Ensure we have a selected URL
@@ -249,8 +310,16 @@ async def _handle_search_link_input(client, message, user_id, state, stage):
         msg = f"📖 <b>{info.get('title', 'Desconhecido')}</b>\n\n"
         msg += f"📊 <b>Total de capítulos:</b> {len(chapters)}\n"
         
-        first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
-        last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        # Extract first and last chapter numbers (different formats for different sources)
+        if source in ("nine", "nexus"):
+            # Nine Manga and Nexus Toons return dicts with 'number' key
+            first_cap = chapters[0].get("number", 1)
+            last_cap = chapters[-1].get("number", len(chapters))
+        else:
+            # Flower Mangas returns URLs with 'capitulo-' in them
+            first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
+            last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        
         msg += f"📍 <b>De:</b> Capítulo {first_cap}\n"
         msg += f"📍 <b>Até:</b> Capítulo {last_cap}\n\n"
         
@@ -309,13 +378,22 @@ async def manga_result_callback(client, query):
         info_msg = await send_message(query.message.chat.id, "📊 Carregando capítulos...")
         chapters = await downloader.list_chapters(selected_url)
         info = await downloader.get_manga_info(selected_url)
+        source = state.get("source", "flower")
         
         # Build info message
         msg = f"📖 <b>{info.get('title', 'Desconhecido')}</b>\n\n"
         msg += f"📊 <b>Total de capítulos:</b> {len(chapters)}\n"
         
-        first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
-        last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        # Extract first and last chapter numbers (different formats for different sources)
+        if source in ("nine", "nexus"):
+            # Nine Manga and Nexus Toons return dicts with 'number' key
+            first_cap = chapters[0].get("number", 1)
+            last_cap = chapters[-1].get("number", len(chapters))
+        else:
+            # Flower Mangas returns URLs with 'capitulo-' in them
+            first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
+            last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        
         msg += f"📍 <b>De:</b> Capítulo {first_cap}\n"
         msg += f"📍 <b>Até:</b> Capítulo {last_cap}\n\n"
         
@@ -345,6 +423,7 @@ async def _handle_chapter_input(client, message, user_id, state):
     downloader = state.get("downloader")
     chapters = state.get("chapters", [])
     selected_url = state.get("selected_url")
+    source = state.get("source", "flower")
     
     if not all([downloader, chapters, selected_url]):
         await send_message(message, "❌ Erro de configuração.")
@@ -371,11 +450,16 @@ async def _handle_chapter_input(client, message, user_id, state):
         ]
         
         results = []
-        for idx, chapter_url in enumerate(selected_chapters, 1):
+        for idx, chapter_data in enumerate(selected_chapters, 1):
             # Update progress
             progress_pct = int((idx / len(selected_chapters)) * 100)
             progress_bar = get_progress_bar_string(f"{progress_pct}%")
-            chapter_num = chapter_url.split("capitulo-")[1].rstrip("/")
+            
+            # Extract chapter number based on source
+            if source in ("nine", "nexus"):
+                chapter_num = chapter_data.get("number", idx)
+            else:
+                chapter_num = chapter_data.split("capitulo-")[1].rstrip("/")
             
             progress_msg = f"⏳ <b>Baixando capítulos...</b>\n\n{progress_bar} {progress_pct}%\n\n"
             progress_msg += f"📥 Capítulo {chapter_num} ({idx}/{len(selected_chapters)})"
@@ -383,7 +467,7 @@ async def _handle_chapter_input(client, message, user_id, state):
             await edit_message(download_msg, progress_msg)
             
             cbz_path, page_count = await downloader.download_chapter(
-                chapter_url,
+                chapter_data,
                 f"{DOWNLOAD_DIR}/manga",
             )
             
