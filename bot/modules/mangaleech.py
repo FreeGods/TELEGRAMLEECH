@@ -311,14 +311,19 @@ async def _handle_search_link_input(client, message, user_id, state, stage):
         msg += f"📊 <b>Total de capítulos:</b> {len(chapters)}\n"
         
         # Extract first and last chapter numbers (different formats for different sources)
-        if source in ("nine", "nexus"):
-            # Nine Manga and Nexus Toons return dicts with 'number' key
-            first_cap = chapters[0].get("number", 1)
-            last_cap = chapters[-1].get("number", len(chapters))
-        else:
-            # Flower Mangas returns URLs with 'capitulo-' in them
-            first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
-            last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        try:
+            if source in ("nine", "nexus"):
+                # Nine Manga and Nexus Toons return dicts with 'number' key
+                first_cap = chapters[0].get("number", 1) if isinstance(chapters[0], dict) else 1
+                last_cap = chapters[-1].get("number", len(chapters)) if isinstance(chapters[-1], dict) else len(chapters)
+            else:
+                # Flower Mangas returns URLs with 'capitulo-' in them
+                first_cap = chapters[0].split("capitulo-")[1].rstrip("/") if "capitulo-" in str(chapters[0]) else 1
+                last_cap = chapters[-1].split("capitulo-")[1].rstrip("/") if "capitulo-" in str(chapters[-1]) else len(chapters)
+        except (IndexError, ValueError, AttributeError) as parse_err:
+            LOGGER.warning(f"Error parsing chapter numbers: {parse_err}. Using fallback values.")
+            first_cap = 1
+            last_cap = len(chapters)
         
         msg += f"📍 <b>De:</b> Capítulo {first_cap}\n"
         msg += f"📍 <b>Até:</b> Capítulo {last_cap}\n\n"
@@ -380,19 +385,31 @@ async def manga_result_callback(client, query):
         info = await downloader.get_manga_info(selected_url)
         source = state.get("source", "flower")
         
+        # Validate chapters list is not empty
+        if not chapters:
+            await edit_message(info_msg, "❌ Nenhum capítulo encontrado para este mangá.")
+            if user_id in manga_user_state:
+                del manga_user_state[user_id]
+            return
+        
         # Build info message
         msg = f"📖 <b>{info.get('title', 'Desconhecido')}</b>\n\n"
         msg += f"📊 <b>Total de capítulos:</b> {len(chapters)}\n"
         
         # Extract first and last chapter numbers (different formats for different sources)
-        if source in ("nine", "nexus"):
-            # Nine Manga and Nexus Toons return dicts with 'number' key
-            first_cap = chapters[0].get("number", 1)
-            last_cap = chapters[-1].get("number", len(chapters))
-        else:
-            # Flower Mangas returns URLs with 'capitulo-' in them
-            first_cap = chapters[0].split("capitulo-")[1].rstrip("/")
-            last_cap = chapters[-1].split("capitulo-")[1].rstrip("/")
+        try:
+            if source in ("nine", "nexus"):
+                # Nine Manga and Nexus Toons return dicts with 'number' key
+                first_cap = chapters[0].get("number", 1) if isinstance(chapters[0], dict) else 1
+                last_cap = chapters[-1].get("number", len(chapters)) if isinstance(chapters[-1], dict) else len(chapters)
+            else:
+                # Flower Mangas returns URLs with 'capitulo-' in them
+                first_cap = chapters[0].split("capitulo-")[1].rstrip("/") if "capitulo-" in str(chapters[0]) else 1
+                last_cap = chapters[-1].split("capitulo-")[1].rstrip("/") if "capitulo-" in str(chapters[-1]) else len(chapters)
+        except (IndexError, ValueError, AttributeError) as parse_err:
+            LOGGER.warning(f"Error parsing chapter numbers: {parse_err}. Using fallback values.")
+            first_cap = 1
+            last_cap = len(chapters)
         
         msg += f"📍 <b>De:</b> Capítulo {first_cap}\n"
         msg += f"📍 <b>Até:</b> Capítulo {last_cap}\n\n"

@@ -64,13 +64,32 @@ class NexusToonsDownloader:
                     params={"search": termo},
                     headers=self.HEADERS,
                 )
-
-                data = response.json()
+                
+                # Check response status
+                response.raise_for_status()
+                
+                # Validate response is not empty
+                if not response.text or not response.text.strip():
+                    if self.logger:
+                        self.logger.error("Empty response from Nexus Toons API")
+                    return []
+                
+                # Parse JSON safely
+                try:
+                    data = response.json()
+                except Exception as json_err:
+                    if self.logger:
+                        self.logger.error(f"Invalid JSON response from Nexus Toons: {json_err}")
+                        self.logger.debug(f"Response text: {response.text[:200]}")
+                    return []
+                
                 mangas = data.get("data", [])
                 
                 # Format results consistently
                 results = []
                 for manga in mangas:
+                    if not isinstance(manga, dict):
+                        continue
                     results.append({
                         "id": manga.get("id"),
                         "title": manga.get("title", ""),
@@ -104,9 +123,32 @@ class NexusToonsDownloader:
                     f"{self.API_BASE}/mangas/{manga_slug}",
                     headers=self.HEADERS,
                 )
-
-                data = response.json()
+                
+                # Check response status
+                response.raise_for_status()
+                
+                # Validate response is not empty
+                if not response.text or not response.text.strip():
+                    if self.logger:
+                        self.logger.error(f"Empty response listing chapters for {manga_slug}")
+                    return []
+                
+                # Parse JSON safely
+                try:
+                    data = response.json()
+                except Exception as json_err:
+                    if self.logger:
+                        self.logger.error(f"Invalid JSON response listing chapters from Nexus Toons: {json_err}")
+                        self.logger.debug(f"Response text: {response.text[:200]}")
+                    return []
+                
                 chapters = data.get("chapters", [])
+                
+                # Validate chapters list
+                if not isinstance(chapters, list):
+                    if self.logger:
+                        self.logger.warning(f"Expected list of chapters, got {type(chapters)}")
+                    return []
                 
                 # Sort by chapter number
                 chapters.sort(key=self._extract_chapter_number)
@@ -135,7 +177,23 @@ class NexusToonsDownloader:
                     headers=self.HEADERS,
                 )
                 
-                data = response.json()
+                # Check response status
+                response.raise_for_status()
+                
+                # Validate response is not empty
+                if not response.text or not response.text.strip():
+                    if self.logger:
+                        self.logger.error(f"Empty response getting info for {manga_slug}")
+                    return {}
+                
+                # Parse JSON safely
+                try:
+                    data = response.json()
+                except Exception as json_err:
+                    if self.logger:
+                        self.logger.error(f"Invalid JSON response getting manga info from Nexus Toons: {json_err}")
+                        self.logger.debug(f"Response text: {response.text[:200]}")
+                    return {}
                 
                 return {
                     "title": data.get("title", "Unknown"),
