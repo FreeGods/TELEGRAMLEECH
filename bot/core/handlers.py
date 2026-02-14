@@ -13,7 +13,7 @@ from ..modules import *
 from .tg_client import TgClient
 
 
-async def handle_manga_cancel(query):
+async def handle_manga_cancel(client, query):
     """Handle manga flow cancellation"""
     await query.answer()
     await edit_message(query.message, "❌ Comando cancelado.")
@@ -407,7 +407,7 @@ def add_handlers():
     )
     TgClient.bot.add_handler(
         CallbackQueryHandler(
-            lambda client, query: handle_manga_cancel(query),
+            handle_manga_cancel,
             filters=regex(r"^manga_flow_\d+_cancel"),
         )
     )
