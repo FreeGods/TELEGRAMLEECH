@@ -217,7 +217,7 @@ async def _handle_search_link_input(client, message, user_id, state, stage):
             
             if len(results) == 1:
                 # Auto-select
-                selected_url = results[0]["url"]
+                selected_url = results[0]["slug"] if source == "nexus" else results[0]["url"]
             else:
                 # Show results
                 buttons = ButtonMaker()
@@ -374,7 +374,8 @@ async def manga_result_callback(client, query):
     
     await query.answer()
     
-    selected_url = results[result_idx]["url"]
+    source = state.get("source", "flower")
+    selected_url = results[result_idx]["slug"] if source == "nexus" else results[result_idx]["url"]
     manga_user_state[user_id]["selected_url"] = selected_url
     downloader = state.get("downloader")
     
@@ -383,7 +384,6 @@ async def manga_result_callback(client, query):
         info_msg = await send_message(query.message.chat.id, "📊 Carregando capítulos...")
         chapters = await downloader.list_chapters(selected_url)
         info = await downloader.get_manga_info(selected_url)
-        source = state.get("source", "flower")
         
         # Validate chapters list is not empty
         if not chapters:
