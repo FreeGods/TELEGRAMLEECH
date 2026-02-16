@@ -115,16 +115,43 @@ class NineMangaDownloader:
                 for url, cap_id in matches:
                     if url not in vistos:
                         vistos.add(url)
-                        # Try to extract chapter number from surrounding HTML
+                        # Try to extract chapter number from surrounding HTML context
                         idx = html.find(url)
+                        numero = None
                         if idx >= 0:
-                            trecho = html[max(0, idx - 50) : idx + 200]
-                            # Look for "Ch NNN" or "Cap NNN" pattern
-                            num_match = re.search(r"[Cc]h(?:ap)?\s*(\d+(?:\.\d+)?)", trecho)
-                            numero = float(num_match.group(1)) if num_match else float(cap_id)
-                        else:
+                            trecho = html[max(0, idx - 100) : idx + 300]
+                            # Patterns tried in order of reliability:
+                            # 1) "Ch 1100" / "Cap 1100" / "Chapter 1100"
+                            # 2) Capitulo 1100 (PT-BR)
+                            # 3) Número isolado dentro de <a> ou <li> próximo ao link
+                            for pat in (
+                                r"[Cc]h(?:ap(?:ter|ítulo)?)?\s*\.?\s*(\d+(?:\.\d+)?)",
+                                r"[Cc]ap(?:ítulo|itulo)?\s*\.?\s*(\d+(?:\.\d+)?)",
+                                r">(\d+(?:\.\d+)?)\s*</",
+                                r'title="[^"]*?(\d+(?:\.\d+)?)[^"]*?"',
+                            ):
+                                m = re.search(pat, trecho)
+                                if m:
+                                    candidate = float(m.group(1))
+                                    # Sanity check: cap_id as int for scale comparison
+                                    # Real chapter numbers are almost always < 10000
+                                    if candidate < 10000:
+                                        numero = candidate
+                                        break
+
+                        # Last resort: try to parse the URL path segment before the ID
+                        # e.g. /chapter/one-piece-1100/6833501.html → 1100
+                        if numero is None:
+                            url_num = re.search(r'-(\d+(?:\.\d+)?)(?:/\d+\.html)$', url)
+                            if url_num:
+                                candidate = float(url_num.group(1))
+                                if candidate < 10000:
+                                    numero = candidate
+
+                        # Absolute fallback: use the raw ID (may be wrong but won't crash)
+                        if numero is None:
                             numero = float(cap_id)
-                        
+
                         caps.append({
                             "url": url,
                             "id": cap_id,
@@ -154,7 +181,7 @@ class NineMangaDownloader:
             
             async with AsyncClient(timeout=30, follow_redirects=True) as client:
                 response = await client.get(
-                    url_obra,
+                    f"{url_obra}?waring=1",
                     headers={**self.HEADERS, "Referer": f"{self.BASE_URL}/"},
                 )
                 
@@ -184,17 +211,20 @@ class NineMangaDownloader:
             return {}
 
     async def download_chapter(
-        self, chapter_dict: Dict, pasta: str
+        self, chapter_dict: Dict, pasta: str, cover_data: bytes = None
     ) -> Tuple[Optional[str], int]:
         """
-        Download a single chapter as CBZ file
-        
+        Download a single chapter as CBZ file.
+
         Args:
-            chapter_dict: Chapter dictionary with 'url' and 'id' keys
-            pasta: Download directory path
-            
+            chapter_dict: Chapter dictionary with 'url', 'id', and 'number' keys.
+            pasta:        Download directory path.
+            cover_data:   Optional raw bytes of the manga cover image.
+                          If provided, it is written as 000_cover.jpg at the start
+                          of every CBZ so that readers display the correct cover.
+
         Returns:
-            Tuple of (filepath, page_count) or (None, 0) if failed
+            Tuple of (filepath, page_count) or (None, 0) if failed.
         """
         try:
             if not isinstance(chapter_dict, dict):
@@ -202,10 +232,13 @@ class NineMangaDownloader:
                 url_cap = chapter_dict
                 cap_id = re.search(r'/(\d+)\.html$', url_cap)
                 cap_id = cap_id.group(1) if cap_id else "0"
+                cap_number = cap_id   # no number info available
             else:
-                url_cap = chapter_dict.get("url")
-                cap_id = chapter_dict.get("id", "0")
-            
+                url_cap    = chapter_dict.get("url")
+                cap_id     = chapter_dict.get("id", "0")
+                # Prefer the human-readable chapter number over the raw site ID
+                cap_number = chapter_dict.get("number", cap_id)
+
             await self._apply_delay()
             
             images = []
@@ -268,13 +301,27 @@ class NineMangaDownloader:
             # Create directory
             await makedirs(pasta, exist_ok=True)
 
-            # Create CBZ file
-            nome = f"cap_{cap_id}"
+            # Use the human-readable chapter number in the filename
+            # Format: cap_0001100.0  →  zero-padded to 7 digits so filenames sort correctly
+            try:
+                num_float = float(cap_number)
+                # Integer chapters → "cap_01100", decimal → "cap_01100.5"
+                if num_float == int(num_float):
+                    nome = f"cap_{int(num_float):05d}"
+                else:
+                    nome = f"cap_{num_float:08.1f}"
+            except (ValueError, TypeError):
+                nome = f"cap_{cap_number}"
+
             cbz_path = f"{pasta}/{nome}.cbz"
 
             img_headers = {**self.HEADERS, "Referer": f"{self.BASE_URL}/", "Accept": "image/webp,image/*,*/*"}
             
             with zipfile.ZipFile(cbz_path, "w", zipfile.ZIP_STORED) as cbz:
+                # Inject cover image as first entry when available
+                if cover_data:
+                    cbz.writestr("000_cover.jpg", cover_data)
+
                 async with AsyncClient(timeout=30) as client:
                     for i, img_url in enumerate(images, 1):
                         try:
