@@ -190,14 +190,14 @@ def _results_menu(user_id: int, results: list, page: int) -> tuple:
     if end < len(results):
         nav.append(("▶", f"mng:{user_id}:page:{page + 1}"))
     for label, data in nav:
-        b.data_button(label, data)
+        b.data_button(label, data, position="l_body")
 
-    b.data_button("🔍 Nova busca",   f"mng:{user_id}:newsearch")
-    b.data_button("↩ Voltar",        f"mng:{user_id}:back:mode")
-    b.data_button("❌ Cancelar",     f"mng:{user_id}:cancel")
+    b.data_button("🔍 Nova busca",   f"mng:{user_id}:newsearch", position="footer")
+    b.data_button("↩ Voltar",        f"mng:{user_id}:back:mode", position="footer")
+    b.data_button("❌ Cancelar",     f"mng:{user_id}:cancel", position="footer")
 
     msg = f"🔎 <b>Resultados</b> ({len(results)} encontrados):\nPágina {page + 1}/{total_pages}"
-    return msg, b.build_menu(1, last_row_buttons=len(nav))
+    return msg, b.build_menu(1, lb_cols=len(nav), f_cols=3)
 
 
 def _chapters_menu(user_id: int, info: dict, chapters: list, source: str) -> str:
