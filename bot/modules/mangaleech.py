@@ -571,4 +571,224 @@ async def _handle_text_input(client, message, user_id: int, state: dict, stage: 
         state["selected_url"] = url
         state["stage"] = "loading_chapters"
 
-        loading = await send_message(message, "📊 <b>Carregando capítulos…</b>")
+        loading = await send_message(message, "📊 <b>Carregando informações do mangá…</b>")
+
+        try:
+            chapters, info = await asyncio.gather(
+                downloader.list_chapters(url),
+                downloader.get_manga_info(url),
+            )
+        except Exception as e:
+            LOGGER.error(f"Manga link load error: {e}")
+            await edit_message(loading, "❌ Erro ao carregar. Verifique o link e tente novamente.")
+            _clear(user_id)
+            return
+
+        if not chapters:
+            await edit_message(loading, "❌ Nenhum capítulo encontrado. Verifique o link.")
+            _clear(user_id)
+            return
+
+        state["chapters"]   = chapters
+        state["manga_info"] = info
+        state["stage"]      = "waiting_chapters"
+        state["active_msg_id"] = loading.id
+
+        msg = _chapters_menu(user_id, info, chapters, source)
+        await edit_message(loading, msg)
+
+
+# ──────────────────────────────────────────────
+# Processar intervalo de capítulos e fazer download
+# ──────────────────────────────────────────────
+
+async def _handle_chapter_input(client, message, user_id: int, state: dict):
+    user_input = message.text.strip() if message.text else ""
+    downloader = state.get("downloader")
+    chapters   = state.get("chapters", [])
+    url        = state.get("selected_url")
+    source     = state.get("source", "flower")
+    use_zip    = state.get("use_zip", False)
+    info       = state.get("manga_info", {})
+
+    # Nome limpo do mangá para usar em arquivos e mensagens
+    manga_title    = info.get("title") or "Manga"
+    manga_filename = _safe_filename(manga_title)   # ex: "One_Piece"
+    cover_url      = info.get("image", "")
+
+    if not all([downloader, chapters, url]):
+        await send_message(message, "❌ Erro de sessão. Use /mangaleech novamente.")
+        _clear(user_id)
+        return
+
+    # Parse do intervalo
+    if user_input.lower() in ("todos", "all"):
+        start, end = 0, float("inf")
+    else:
+        parsed = parse_chapter_range(user_input)
+        if parsed is None or parsed[0] is None:
+            await send_message(
+                message,
+                "❌ <b>Formato inválido.</b>\n"
+                "Use: <code>1-5</code> · <code>10</code> · <code>15-20</code> · <code>todos</code>"
+            )
+            return
+        start, end = parsed
+
+    # Filtra capítulos no intervalo
+    selected_chapters = [
+        c for c in chapters
+        if start <= _chapter_number(downloader, c) <= end
+    ]
+
+    if not selected_chapters:
+        await send_message(message, "❌ Nenhum capítulo encontrado nesse intervalo.")
+        return
+
+    # Libera estado antes de um processo longo
+    _clear(user_id)
+    dl_msg = await send_message(
+        message,
+        f"⏳ <b>Iniciando download de {len(selected_chapters)} capítulo(s) de</b> <i>{manga_title}</i>…"
+    )
+    download_dir = f"{DOWNLOAD_DIR}manga/{user_id}_{int(time())}"
+
+    # Baixa a capa uma vez para embutir em todos os CBZs
+    cover_data: bytes | None = None
+    if cover_url:
+        await edit_message(dl_msg, f"🖼️ <b>Baixando capa de</b> <i>{manga_title}</i>…")
+        cover_data = await _fetch_cover(cover_url)
+        if cover_data:
+            LOGGER.info(f"Manga cover fetched: {len(cover_data)} bytes")
+        else:
+            LOGGER.warning(f"Manga cover unavailable for: {manga_title}")
+
+    results: list[tuple[str, int, float]] = []   # (cbz_path, page_count, cap_num)
+
+    try:
+        for idx, chapter_data in enumerate(selected_chapters, 1):
+            pct = int((idx / len(selected_chapters)) * 100)
+            bar = get_progress_bar_string(f"{pct}%")
+
+            # Número do capítulo para exibição no progresso
+            cap_num = _chapter_number(downloader, chapter_data)
+            if cap_num == int(cap_num):
+                cap_display = str(int(cap_num))
+            else:
+                cap_display = str(cap_num)
+
+            await edit_message(
+                dl_msg,
+                f"⏳ <b>Baixando</b> <i>{manga_title}</i>…\n\n"
+                f"{bar} {pct}%\n\n"
+                f"📥 Capítulo <code>{cap_display}</code> ({idx}/{len(selected_chapters)})"
+            )
+
+            cbz_path, page_count = await downloader.download_chapter(
+                chapter_data, download_dir, cover_data=cover_data
+            )
+
+            if cbz_path:
+                # Renomeia o arquivo para incluir o título do mangá
+                # ex: /path/cap_01100.cbz  →  /path/One_Piece_Cap_01100.cbz
+                old_base = os.path.basename(cbz_path)          # cap_01100.cbz
+                cap_part = old_base                             # fallback
+                # Extrai a parte numérica do nome gerado pelo downloader
+                m = re.match(r'(cap_.+)\.cbz$', old_base, re.I)
+                if m:
+                    cap_part = m.group(1)                       # cap_01100
+                new_name = f"{manga_filename}_{cap_part}.cbz"  # One_Piece_cap_01100.cbz
+                new_path = os.path.join(os.path.dirname(cbz_path), new_name)
+                try:
+                    os.rename(cbz_path, new_path)
+                    cbz_path = new_path
+                except Exception as rename_err:
+                    LOGGER.warning(f"Could not rename CBZ: {rename_err}")
+
+                results.append((cbz_path, page_count, cap_num))
+
+        if not results:
+            await edit_message(dl_msg, "❌ Falha no download de todos os capítulos.")
+            await _cleanup_dir(download_dir)
+            return
+
+        # ── Modo ZIP ──────────────────────────────────────────────────────
+        if use_zip:
+            await edit_message(dl_msg, f"🗜️ <b>Compactando</b> <i>{manga_title}</i> em ZIP…")
+            zip_name = f"{manga_filename}_caps.zip"
+            zip_path = os.path.join(download_dir, zip_name)
+
+            def _make_zip():
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for fp, _, _ in results:
+                        zf.write(fp, arcname=os.path.basename(fp))
+
+            await asyncio.to_thread(_make_zip)
+
+            total_size = os.path.getsize(zip_path)
+            await edit_message(
+                dl_msg,
+                f"📤 <b>Enviando ZIP de</b> <i>{manga_title}</i>…\n"
+                f"{len(results)} capítulos · {get_readable_file_size(total_size)}"
+            )
+            cap_nums = sorted(r[2] for r in results)
+            first_c  = int(cap_nums[0])  if cap_nums[0]  == int(cap_nums[0])  else cap_nums[0]
+            last_c   = int(cap_nums[-1]) if cap_nums[-1] == int(cap_nums[-1]) else cap_nums[-1]
+            caption  = (
+                f"📦 <b>{manga_title}</b>\n"
+                f"📚 {len(results)} capítulos"
+                + (f" (Cap. {first_c}–{last_c})" if first_c != last_c else f" (Cap. {first_c})")
+                + f"\n💾 {get_readable_file_size(total_size)}"
+            )
+            await send_file(message, zip_path, caption=caption)
+            await edit_message(dl_msg, f"✅ <b>ZIP de</b> <i>{manga_title}</i> <b>enviado!</b>")
+
+        # ── Modo normal (CBZ individuais) ─────────────────────────────────
+        else:
+            total_size = sum(
+                os.path.getsize(fp) for fp, _, _ in results if os.path.exists(fp)
+            )
+            await edit_message(
+                dl_msg,
+                f"✅ <b>Download concluído!</b> <i>{manga_title}</i>\n\n"
+                f"📦 {len(results)} capítulos · {get_readable_file_size(total_size)}\n"
+                f"📤 <b>Enviando para o Telegram…</b>"
+            )
+
+            for idx, (fp, pages, cap_num) in enumerate(results, 1):
+                pct  = int((idx / len(results)) * 100)
+                bar  = get_progress_bar_string(f"{pct}%")
+                fname = os.path.basename(fp)
+                cap_display = str(int(cap_num)) if cap_num == int(cap_num) else str(cap_num)
+
+                await edit_message(
+                    dl_msg,
+                    f"📤 <b>Enviando</b> <i>{manga_title}</i>…\n"
+                    f"{bar} {pct}%\n"
+                    f"{idx}/{len(results)} — Cap. {cap_display}"
+                )
+                try:
+                    size    = os.path.getsize(fp)
+                    caption = (
+                        f"📖 <b>{manga_title}</b> — Cap. {cap_display}\n"
+                        f"📄 {pages} páginas · {get_readable_file_size(size)}"
+                        + ("\n🖼️ <i>Capa incluída</i>" if cover_data else "")
+                    )
+                    await send_file(message, fp, caption=caption)
+                except Exception as e:
+                    LOGGER.error(f"Error sending {fp}: {e}")
+                    await send_message(
+                        message,
+                        f"⚠️ Erro ao enviar Cap. {cap_display}: {str(e)[:120]}"
+                    )
+
+            await edit_message(
+                dl_msg,
+                f"✅ <b>Todos os capítulos de</b> <i>{manga_title}</i> <b>foram enviados!</b>"
+            )
+
+    except Exception as e:
+        LOGGER.error(f"Manga download error: {e}")
+        await send_message(message, f"❌ Erro durante o download: {str(e)[:200]}")
+    finally:
+        await _cleanup_dir(download_dir)
