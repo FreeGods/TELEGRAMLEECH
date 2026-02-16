@@ -13,17 +13,6 @@ from ..modules import *
 from .tg_client import TgClient
 
 
-async def handle_manga_cancel(client, query):
-    """Handle manga flow cancellation"""
-    await query.answer()
-    await edit_message(query.message, "❌ Comando cancelado.")
-    # Clean up state
-    from ..modules.mangaleech import manga_user_state
-    user_id = query.from_user.id
-    if user_id in manga_user_state:
-        del manga_user_state[user_id]
-
-
 def add_handlers():
     TgClient.bot.add_handler(
         MessageHandler(
@@ -314,7 +303,6 @@ def add_handlers():
             & CustomFilters.authorized,
         )
     )
-
     TgClient.bot.add_handler(
         MessageHandler(
             bot_stats,
@@ -383,6 +371,9 @@ def add_handlers():
             & CustomFilters.authorized,
         )
     )
+
+    # ── Manga Leech ───────────────────────────────────────────────────────────
+    # Comando principal: /mangaleech [-z]
     TgClient.bot.add_handler(
         MessageHandler(
             mangaleech,
@@ -390,32 +381,21 @@ def add_handlers():
             & CustomFilters.authorized,
         )
     )
+    # Dispatcher único para TODOS os callbacks do fluxo manga (prefixo "mng:")
     TgClient.bot.add_handler(
         CallbackQueryHandler(
-            manga_source_callback, filters=regex(r"^manga_flow_\d+_source")
+            manga_callback,
+            filters=regex(r"^mng:\d+:"),
         )
     )
-    TgClient.bot.add_handler(
-        CallbackQueryHandler(
-            manga_mode_callback, filters=regex(r"^manga_flow_\d+_mode")
-        )
-    )
-    TgClient.bot.add_handler(
-        CallbackQueryHandler(
-            manga_result_callback, filters=regex(r"^manga_flow_\d+_result")
-        )
-    )
-    TgClient.bot.add_handler(
-        CallbackQueryHandler(
-            handle_manga_cancel,
-            filters=regex(r"^manga_flow_\d+_cancel"),
-        )
-    )
+    # Handler de texto para fases de espera (search / link / capítulos)
     TgClient.bot.add_handler(
         MessageHandler(
             manga_message_handler,
         )
     )
+    # ─────────────────────────────────────────────────────────────────────────
+
     if Config.SET_COMMANDS:
         global BOT_COMMANDS
 
@@ -465,4 +445,5 @@ def add_handlers():
                 for cmds in [getattr(BotCommands, f"{cmd}Command", None)]
                 if cmds is not None
             ]
-        )
+    )
+    
