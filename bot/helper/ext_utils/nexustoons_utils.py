@@ -209,17 +209,19 @@ class NexusToonsDownloader:
             return {}
 
     async def download_chapter(
-        self, chapter_dict: Dict, pasta: str
+        self, chapter_dict: Dict, pasta: str, cover_data: bytes = None
     ) -> Tuple[Optional[str], int]:
         """
-        Download a single chapter as CBZ file
-        
+        Download a single chapter as CBZ file.
+
         Args:
-            chapter_dict: Chapter dictionary with 'id' and 'number' keys
-            pasta: Download directory path
-            
+            chapter_dict: Chapter dictionary with 'id' and 'number' keys.
+            pasta:        Download directory path.
+            cover_data:   Optional raw bytes of the manga cover image.
+                          Written as 000_cover.jpg inside the CBZ.
+
         Returns:
-            Tuple of (filepath, page_count) or (None, 0) if failed
+            Tuple of (filepath, page_count) or (None, 0) if failed.
         """
         try:
             if not isinstance(chapter_dict, dict):
@@ -227,7 +229,7 @@ class NexusToonsDownloader:
                     self.logger.error(f"Invalid chapter data: {chapter_dict}")
                 return None, 0
             
-            chapter_id = chapter_dict.get("id")
+            chapter_id     = chapter_dict.get("id")
             chapter_number = chapter_dict.get("number", 0)
             
             if not chapter_id:
@@ -243,7 +245,7 @@ class NexusToonsDownloader:
                     headers=self.HEADERS,
                 )
 
-                data = response.json()
+                data  = response.json()
                 pages = data.get("pages", [])
                 
                 if not pages:
@@ -254,8 +256,16 @@ class NexusToonsDownloader:
                 # Create directory
                 await makedirs(pasta, exist_ok=True)
 
-                # Create CBZ file with chapter number
-                nome = f"cap_{float(chapter_number):06.1f}"
+                # Use zero-padded human-readable chapter number in filename
+                try:
+                    num_float = float(chapter_number)
+                    if num_float == int(num_float):
+                        nome = f"cap_{int(num_float):05d}"
+                    else:
+                        nome = f"cap_{num_float:08.1f}"
+                except (ValueError, TypeError):
+                    nome = f"cap_{chapter_number}"
+
                 cbz_path = f"{pasta}/{nome}.cbz"
 
                 img_headers = {
@@ -264,11 +274,15 @@ class NexusToonsDownloader:
                 }
                 
                 with zipfile.ZipFile(cbz_path, "w", zipfile.ZIP_STORED) as cbz:
+                    # Inject cover image as first entry when available
+                    if cover_data:
+                        cbz.writestr("000_cover.jpg", cover_data)
+
                     async with AsyncClient(timeout=30) as img_client:
                         for page in sorted(pages, key=lambda p: int(p.get("pageNumber", 0))):
                             try:
                                 page_num = page.get("pageNumber", 0)
-                                img_url = page.get("imageUrl", "").strip()
+                                img_url  = page.get("imageUrl", "").strip()
                                 
                                 if not img_url:
                                     continue
