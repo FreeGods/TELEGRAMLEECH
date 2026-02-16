@@ -571,4 +571,4 @@ async def _handle_text_input(client, message, user_id: int, state: dict, stage: 
         state["selected_url"] = url
         state["stage"] = "loading_chapters"
 
-        loading = await send_message(message, "📊 <b>Ca
+        loading = await send_message(message, "📊 <b>Carregando capítulos…</b>")
