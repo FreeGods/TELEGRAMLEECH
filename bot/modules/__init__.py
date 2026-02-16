@@ -40,10 +40,8 @@ from .users_settings import get_users_settings, edit_user_settings, send_user_se
 from .ytdlp import ytdl, ytdl_leech
 from .mangaleech import (
     mangaleech,
-    manga_source_callback,
-    manga_mode_callback,
-    manga_result_callback,
-    manga_message_handler,
+    manga_callback,        # dispatcher único (substitui manga_source_callback,
+    manga_message_handler, #   manga_mode_callback e manga_result_callback)
 )
 
 __all__ = [
@@ -111,8 +109,6 @@ __all__ = [
     "ytdl",
     "ytdl_leech",
     "mangaleech",
-    "manga_source_callback",
-    "manga_mode_callback",
-    "manga_result_callback",
+    "manga_callback",
     "manga_message_handler",
 ]
