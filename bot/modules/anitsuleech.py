@@ -31,9 +31,9 @@ from ..helper.telegram_helper.bot_commands import BotCommands
 # Importa o cliente Anitsu (assumindo que está em helper/ext_utils/)
 try:
     from ..helper.ext_utils.anitsu_client import AnitsuClient, get_anitsu_client
-except ImportError:
-    # Fallback se o cliente não estiver integrado ainda
-    LOGGER.warning("anitsu_client não encontrado — /anitsuleech não funcionará")
+except Exception as e:
+    # Fallback se o cliente não estiver integrado ainda — registrar exceção completa
+    LOGGER.exception("anitsu_client não encontrado ou erro ao importar — /anitsuleech não funcionará: %s", e)
     AnitsuClient = None
     get_anitsu_client = None
 
@@ -232,107 +232,119 @@ async def anitsuleech(client, message):
 
 @new_task
 async def anitsu_callback(client, query):
-    """Handler único para todos os callbacks do fluxo Anitsu."""
-    parts = query.data.split(":")
-    if len(parts) < 3:
-        LOGGER.warning(f"[Anitsu] Callback inválido: {query.data}")
-        await query.answer("❌ Dados inválidos", show_alert=True)
-        return
+    """Handler único para todos os callbacks do fluxo Anitsu.
 
+    Envolve o dispatcher em um try/except para capturar quaisquer
+    exceções inesperadas e registrar traceback completo nos logs.
+    """
     try:
-        cb_user_id = int(parts[1])
-    except ValueError:
-        LOGGER.warning(f"[Anitsu] Não foi possível extrair user_id de: {query.data}")
-        await query.answer()
-        return
-
-    action = parts[2]
-    param  = ":".join(parts[3:]) if len(parts) > 3 else ""  # Suporta colons no param
-    caller_id = query.from_user.id
-
-    LOGGER.debug(f"[Anitsu] Callback: action={action}, user={cb_user_id}, caller={caller_id}")
-
-    if caller_id != cb_user_id:
-        LOGGER.warning(f"[Anitsu] Acesso negado: {caller_id} tentou acessar sessão de {cb_user_id}")
-        await query.answer("❌ Esta sessão não é sua.", show_alert=True)
-        return
-
-    if cb_user_id not in anitsu_user_state:
-        LOGGER.info(f"[Anitsu] Sessão expirada para {cb_user_id}")
-        await query.answer("⏱️ Sessão expirada. Use /anitsuleech novamente.", show_alert=True)
-        return
-
-    _touch(cb_user_id)
-    state = anitsu_user_state[cb_user_id]
-
-    # ── Cancelar ──────────────────────────────
-    if action == "cancel":
-        LOGGER.info(f"[Anitsu] Cancelando sessão para {cb_user_id}")
-        await query.answer()
-        await edit_message(query.message, "❌ Operação cancelada.")
-        _clear(cb_user_id)
-        return
-
-    # ── Noop ──────────────────────────────────
-    if action == "noop":
-        await query.answer()
-        return
-
-    # ── Nova busca ────────────────────────────
-    if action == "newsearch":
-        await query.answer()
-        await edit_message(query.message, "🔍 <b>Nova busca:</b>\nDigite o nome do anime:")
-        state["stage"] = "waiting_search"
-        return
-
-    # ── Paginação ─────────────────────────────
-    if action == "page":
-        await query.answer()
-        try:
-            page = int(param)
-        except ValueError:
+        parts = query.data.split(":")
+        if len(parts) < 3:
+            LOGGER.warning(f"[Anitsu] Callback inválido: {query.data}")
+            await query.answer("❌ Dados inválidos", show_alert=True)
             return
-        state["page"] = page
-        results = state.get("search_results", [])
-        txt, markup = _search_results_menu(cb_user_id, results, page)
-        await edit_message(query.message, txt, markup)
-        return
 
-    # ── Seleção de resultado ──────────────────
-    if action == "sel":
-        await query.answer()
         try:
-            idx = int(param)
+            cb_user_id = int(parts[1])
         except ValueError:
+            LOGGER.warning(f"[Anitsu] Não foi possível extrair user_id de: {query.data}")
+            await query.answer()
             return
-        await _handle_select(query, cb_user_id, state, idx)
-        return
 
-    # ── Navegação de pasta ────────────────────
-    if action == "nav":
+        action = parts[2]
+        param = ":".join(parts[3:]) if len(parts) > 3 else ""  # Suporta colons no param
+        caller_id = getattr(query.from_user, 'id', None)
+
+        LOGGER.debug(f"[Anitsu] Callback: action={action}, user={cb_user_id}, caller={caller_id}")
+
+        if caller_id != cb_user_id:
+            LOGGER.warning(f"[Anitsu] Acesso negado: {caller_id} tentou acessar sessão de {cb_user_id}")
+            await query.answer("❌ Esta sessão não é sua.", show_alert=True)
+            return
+
+        if cb_user_id not in anitsu_user_state:
+            LOGGER.info(f"[Anitsu] Sessão expirada para {cb_user_id}")
+            await query.answer("⏱️ Sessão expirada. Use /anitsuleech novamente.", show_alert=True)
+            return
+
+        _touch(cb_user_id)
+        state = anitsu_user_state[cb_user_id]
+
+        # ── Cancelar ──────────────────────────────
+        if action == "cancel":
+            LOGGER.info(f"[Anitsu] Cancelando sessão para {cb_user_id}")
+            await query.answer()
+            await edit_message(query.message, "❌ Operação cancelada.")
+            _clear(cb_user_id)
+            return
+
+        # ── Noop ──────────────────────────────────
+        if action == "noop":
+            await query.answer()
+            return
+
+        # ── Nova busca ────────────────────────────
+        if action == "newsearch":
+            await query.answer()
+            await edit_message(query.message, "🔍 <b>Nova busca:</b>\nDigite o nome do anime:")
+            state["stage"] = "waiting_search"
+            return
+
+        # ── Paginação ─────────────────────────────
+        if action == "page":
+            await query.answer()
+            try:
+                page = int(param)
+            except ValueError:
+                return
+            state["page"] = page
+            results = state.get("search_results", [])
+            txt, markup = _search_results_menu(cb_user_id, results, page)
+            await edit_message(query.message, txt, markup)
+            return
+
+        # ── Seleção de resultado ──────────────────
+        if action == "sel":
+            await query.answer()
+            try:
+                idx = int(param)
+            except ValueError:
+                return
+            await _handle_select(query, cb_user_id, state, idx)
+            return
+
+        # ── Navegação de pasta ────────────────────
+        if action == "nav":
+            await query.answer()
+            await _navigate_folder(query, cb_user_id, state, param)
+            return
+
+        # ── Seleção de arquivo ────────────────────
+        if action == "file":
+            await query.answer()
+            await _handle_file_select(query, cb_user_id, state, param)
+            return
+
+        # ── Mirror / Leech ────────────────────────
+        if action in ("mirror", "leech"):
+            await query.answer()
+            await _handle_download_action(query, cb_user_id, state, action, param)
+            return
+
+        # ── Voltar ────────────────────────────────
+        if action == "back":
+            await query.answer()
+            await _handle_back(query, cb_user_id, state, param)
+            return
+
         await query.answer()
-        await _navigate_folder(query, cb_user_id, state, param)
+    except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro inesperado no callback: {e}")
+        try:
+            await query.answer("❌ Erro interno. Veja logs para detalhes.", show_alert=True)
+        except Exception:
+            pass
         return
-
-    # ── Seleção de arquivo ────────────────────
-    if action == "file":
-        await query.answer()
-        await _handle_file_select(query, cb_user_id, state, param)
-        return
-
-    # ── Mirror / Leech ────────────────────────
-    if action in ("mirror", "leech"):
-        await query.answer()
-        await _handle_download_action(query, cb_user_id, state, action, param)
-        return
-
-    # ── Voltar ────────────────────────────────
-    if action == "back":
-        await query.answer()
-        await _handle_back(query, cb_user_id, state, param)
-        return
-
-    await query.answer()
 
 
 # ─────────────────────────────────────────────
