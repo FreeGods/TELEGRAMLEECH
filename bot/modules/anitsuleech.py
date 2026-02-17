@@ -184,15 +184,32 @@ def _file_actions_menu(user_id: int, fpath: str, info: dict) -> tuple:
 @new_task
 async def anitsuleech(client, message):
     """Ponto de entrada: /anitsuleech"""
+    # Verifica se o cliente está disponível
     if not get_anitsu_client:
+        LOGGER.error("[Anitsu] Client function não disponível - import falhou")
         await send_message(message, "❌ Anitsu client não configurado. Contate o admin.")
+        return
+
+    # Tenta instanciar o cliente
+    try:
+        ac = get_anitsu_client()
+        LOGGER.info(f"[Anitsu] Cliente inicializado com sucesso")
+    except RuntimeError as e:
+        LOGGER.error(f"[Anitsu] Erro ao inicializar cliente: {e}")
+        await send_message(message, f"❌ Anitsu não configurado: {str(e)}")
+        return
+    except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro inesperado ao inicializar:** {e}")
+        await send_message(message, f"❌ Erro ao inicializar Anitsu: {str(e)}")
         return
 
     user = message.from_user
     if not user:
+        LOGGER.warning("[Anitsu] Mensagem sem usuário")
         return
     user_id = user.id
 
+    LOGGER.info(f"[Anitsu] Iniciando /anitsuleech para usuário {user_id}")
     _clear(user_id)
 
     txt = (
@@ -206,6 +223,7 @@ async def anitsuleech(client, message):
         "active_msg_id": reply.id,
         "last_active": time(),
     }
+    LOGGER.info(f"[Anitsu] Sessão iniciada para {user_id}")
 
 
 # ─────────────────────────────────────────────
@@ -217,24 +235,30 @@ async def anitsu_callback(client, query):
     """Handler único para todos os callbacks do fluxo Anitsu."""
     parts = query.data.split(":")
     if len(parts) < 3:
+        LOGGER.warning(f"[Anitsu] Callback inválido: {query.data}")
         await query.answer("❌ Dados inválidos", show_alert=True)
         return
 
     try:
         cb_user_id = int(parts[1])
     except ValueError:
+        LOGGER.warning(f"[Anitsu] Não foi possível extrair user_id de: {query.data}")
         await query.answer()
         return
 
     action = parts[2]
-    param  = parts[3] if len(parts) > 3 else ""
+    param  = ":".join(parts[3:]) if len(parts) > 3 else ""  # Suporta colons no param
     caller_id = query.from_user.id
 
+    LOGGER.debug(f"[Anitsu] Callback: action={action}, user={cb_user_id}, caller={caller_id}")
+
     if caller_id != cb_user_id:
+        LOGGER.warning(f"[Anitsu] Acesso negado: {caller_id} tentou acessar sessão de {cb_user_id}")
         await query.answer("❌ Esta sessão não é sua.", show_alert=True)
         return
 
     if cb_user_id not in anitsu_user_state:
+        LOGGER.info(f"[Anitsu] Sessão expirada para {cb_user_id}")
         await query.answer("⏱️ Sessão expirada. Use /anitsuleech novamente.", show_alert=True)
         return
 
@@ -243,6 +267,7 @@ async def anitsu_callback(client, query):
 
     # ── Cancelar ──────────────────────────────
     if action == "cancel":
+        LOGGER.info(f"[Anitsu] Cancelando sessão para {cb_user_id}")
         await query.answer()
         await edit_message(query.message, "❌ Operação cancelada.")
         _clear(cb_user_id)
@@ -318,11 +343,13 @@ async def _handle_select(query, user_id: int, state: dict, idx: int):
     """Usuário selecionou um anime da lista de busca."""
     results = state.get("search_results", [])
     if idx >= len(results):
+        LOGGER.warning(f"[Anitsu] Índice inválido: {idx} (total: {len(results)})")
         await edit_message(query.message, "❌ Resultado inválido.")
         return
 
     selected = results[idx]
     path = selected.get("path", "")
+    LOGGER.info(f"[Anitsu] Selecionado: {selected.get('name')} -> {path}")
     state["current_path"] = path
     state["breadcrumb"] = [path]
 
@@ -331,28 +358,41 @@ async def _handle_select(query, user_id: int, state: dict, idx: int):
 
 async def _navigate_folder(query, user_id: int, state: dict, path: str):
     """Navega para uma pasta."""
+    LOGGER.debug(f"[Anitsu] Navegando para pasta: {path}")
     loading = await edit_message(query.message, f"📂 <b>Carregando...</b> {_truncate(path, 40)}")
 
     try:
         ac = get_anitsu_client()
-        data = ac.list_files(path)
+        LOGGER.debug(f"[Anitsu] Cliente obtido, chamando list_files({path})...")
+        # IMPORTANTE: list_files é assíncrono, deve usar await
+        data = await ac.list_files(path)
+        LOGGER.debug(f"[Anitsu] Resposta recebida: {type(data)} - {str(data)[:200]}")
     except Exception as e:
-        LOGGER.error(f"Anitsu nav error: {e}")
+        LOGGER.exception(f"[Anitsu] Erro ao navegar pasta {path}: {e}")
         await edit_message(loading, f"❌ Erro ao acessar pasta: {str(e)[:100]}")
         return
 
+    if not data:
+        LOGGER.warning(f"[Anitsu] list_files retornou None ou vazio")
+        await edit_message(loading, f"❌ Resposta vazia do servidor")
+        return
+
     if isinstance(data, dict) and "error" in data:
-        await edit_message(loading, f"❌ {data.get('detail', 'Erro desconhecido')}")
+        detail = data.get('detail', 'Erro desconhecido')
+        LOGGER.warning(f"[Anitsu] Erro na resposta: {detail}")
+        await edit_message(loading, f"❌ {detail}")
         return
 
     files = data.get("files", [])
     parent = data.get("parent")
 
     if not files:
+        LOGGER.info(f"[Anitsu] Pasta vazia: {path}")
         await edit_message(loading, "📂 Pasta vazia.")
         return
 
     state["current_path"] = path
+    LOGGER.info(f"[Anitsu] Exibindo {len(files)} itens em {path}")
     txt, markup = _folder_menu(user_id, path, files, parent)
     await edit_message(loading, txt, markup)
 
@@ -370,9 +410,10 @@ async def _handle_file_select(query, user_id: int, state: dict, fpath_enc: str):
 
     try:
         ac = get_anitsu_client()
+        LOGGER.debug(f"[Anitsu] Obtendo info do arquivo: {fpath}...")
         info = ac.get_download_info(fpath)
     except Exception as e:
-        LOGGER.error(f"Anitsu file info error: {e}")
+        LOGGER.exception(f"[Anitsu] Erro ao obter info do arquivo: {e}")
         await edit_message(loading, f"❌ Erro: {str(e)[:100]}")
         return
 
@@ -391,18 +432,22 @@ async def _handle_download_action(query, user_id: int, state: dict, action: str,
     import base64
     try:
         fpath = base64.b64decode(fpath_enc).decode()
-    except Exception:
+    except Exception as e:
+        LOGGER.error(f"[Anitsu] Erro ao decodificar caminho: {e}")
         await edit_message(query.message, "❌ Erro ao decodificar caminho.")
         return
 
     try:
         ac = get_anitsu_client()
         url = ac.download_url(fpath)
+        LOGGER.info(f"[Anitsu] URL gerada para {action}: {url[:80]}...")
     except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro ao gerar URL: {e}")
         await edit_message(query.message, f"❌ Erro: {str(e)[:100]}")
         return
 
     fname = os.path.basename(fpath)
+    LOGGER.info(f"[Anitsu] Iniciando {action.upper()} para: {fname}")
     _clear(user_id)
 
     # Cria uma mensagem falsa com o comando correspondente para chamar o handler nativo
@@ -428,11 +473,13 @@ async def _handle_download_action(query, user_id: int, state: dict, action: str,
         message.text = fake_text
 
         if action == "mirror":
+            LOGGER.debug(f"[Anitsu] Chamando handler de mirror")
             await mirror(None, message)
         else:
+            LOGGER.debug(f"[Anitsu] Chamando handler de leech")
             await leech(None, message)
     except Exception as e:
-        LOGGER.error(f"Anitsu download dispatch error: {e}")
+        LOGGER.exception(f"[Anitsu] Erro ao executar {action}: {e}")
         await send_message(
             query.message.chat.id,
             f"❌ Erro ao iniciar download. Execute manualmente:\n<code>{fake_text}</code>"
@@ -441,19 +488,23 @@ async def _handle_download_action(query, user_id: int, state: dict, action: str,
 
 async def _handle_back(query, user_id: int, state: dict, target: str):
     """Voltar para etapa anterior."""
+    LOGGER.debug(f"[Anitsu] Voltando para: {target}")
     if target == "results":
         # Volta para lista de resultados de busca
         results = state.get("search_results", [])
         page    = state.get("page", 0)
         if not results:
+            LOGGER.warning(f"[Anitsu] Tentativa de voltar sem resultados em cache")
             await edit_message(query.message, "❌ Nenhum resultado para voltar.")
             return
+        LOGGER.info(f"[Anitsu] Voltando para resultados (página {page})")
         txt, markup = _search_results_menu(user_id, results, page)
         await edit_message(query.message, txt, markup)
 
     elif target == "folder":
         # Volta para a pasta atual
         path = state.get("current_path", "")
+        LOGGER.info(f"[Anitsu] Voltando para pasta: {path}")
         await _navigate_folder(query, user_id, state, path)
 
 
@@ -468,14 +519,20 @@ async def anitsu_message_handler(client, message):
         return
     user_id = message.from_user.id
 
+    # Verifica se há uma sessão ativa para este usuário
     if user_id not in anitsu_user_state:
         return
 
     state = anitsu_user_state[user_id]
     stage = state.get("stage", "")
 
+    LOGGER.debug(f"[Anitsu] Mensagem recebida de {user_id}, stage={stage}")
+
     # TTL check
-    if time() - state.get("last_active", 0) > SESSION_TTL:
+    last_active = state.get("last_active", 0)
+    time_diff = time() - last_active
+    if time_diff > SESSION_TTL:
+        LOGGER.info(f"[Anitsu] Sessão expirada para {user_id} (idle por {time_diff:.0f}s)")
         _clear(user_id)
         await send_message(message, "⏱️ Sessão expirada. Use /anitsuleech novamente.")
         return
@@ -483,27 +540,49 @@ async def anitsu_message_handler(client, message):
     _touch(user_id)
 
     if stage == "waiting_search":
-        await _handle_search(client, message, user_id, state)
+        LOGGER.debug(f"[Anitsu] Processando busca para {user_id}")
+        try:
+            await _handle_search(client, message, user_id, state)
+        except Exception as e:
+            LOGGER.exception(f"[Anitsu] Erro ao processar busca para {user_id}: {e}")
+            await send_message(message, f"❌ Erro ao processar busca: {str(e)[:100]}")
+            _clear(user_id)
+    else:
+        LOGGER.debug(f"[Anitsu] Stage '{stage}' não é 'waiting_search', ignorando mensagem")
 
 
 async def _handle_search(client, message, user_id: int, state: dict):
     """Processa a busca digitada pelo usuário."""
     query = message.text.strip() if message.text else ""
     if not query:
+        LOGGER.warning(f"[Anitsu] Usuário {user_id} enviou busca vazia")
         return
 
+    LOGGER.info(f"[Anitsu] Buscando por: {query}")
     loading = await send_message(message, f"🔍 <b>Buscando:</b> {query}...")
 
     try:
         ac = get_anitsu_client()
-        data = ac.search(query)
+        LOGGER.debug(f"[Anitsu] Chamando search({query})...")
+        # IMPORTANTE: search é assíncrono, deve usar await
+        data = await ac.search(query)
+        LOGGER.debug(f"[Anitsu] Resposta de busca: {type(data)} - {str(data)[:200]}")
     except Exception as e:
-        LOGGER.error(f"Anitsu search error: {e}")
-        await edit_message(loading, f"❌ Erro: {str(e)[:100]}")
+        LOGGER.exception(f"[Anitsu] Erro ao buscar {query}: {e}")
+        await edit_message(loading, f"❌ Erro na busca: {str(e)[:100]}")
+        return
+
+    if not data:
+        LOGGER.warning(f"[Anitsu] search retornou None ou vazio para '{query}'")
+        b = ButtonMaker()
+        b.data_button("🔍 Tentar novamente", f"ant:{user_id}:newsearch")
+        b.data_button("❌ Cancelar",         f"ant:{user_id}:cancel")
+        await edit_message(loading, f"❌ Resposta vazia do servidor", b.build_menu(1))
         return
 
     if isinstance(data, dict) and "error" in data:
         detail = data.get("detail", "Erro desconhecido")
+        LOGGER.warning(f"[Anitsu] Erro na resposta: {detail}")
         b = ButtonMaker()
         b.data_button("🔍 Tentar novamente", f"ant:{user_id}:newsearch")
         b.data_button("❌ Cancelar",         f"ant:{user_id}:cancel")
@@ -512,6 +591,7 @@ async def _handle_search(client, message, user_id: int, state: dict):
 
     results = data.get("results", [])
     if not results:
+        LOGGER.info(f"[Anitsu] Nenhum resultado para '{query}'")
         b = ButtonMaker()
         b.data_button("🔍 Tentar novamente", f"ant:{user_id}:newsearch")
         b.data_button("❌ Cancelar",         f"ant:{user_id}:cancel")
@@ -523,6 +603,7 @@ async def _handle_search(client, message, user_id: int, state: dict):
     state["page"] = 0
     state["stage"] = "results"
 
+    LOGGER.info(f"[Anitsu] Encontrados {len(results)} resultados para '{query}'")
     txt, markup = _search_results_menu(user_id, results, 0)
     await edit_message(loading, txt, markup)
     state["active_msg_id"] = loading.id
