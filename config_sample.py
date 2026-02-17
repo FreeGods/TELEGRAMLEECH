@@ -131,6 +131,9 @@ RCLONE_SERVE_PASS = ""
 JD_EMAIL = ""
 JD_PASS = ""
 
+# Anitsu Cloud
+ANITSU_COOKIE_FILE = ""
+
 # Sabnzbd
 USENET_SERVERS = [
     {
