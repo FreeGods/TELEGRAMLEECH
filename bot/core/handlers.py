@@ -396,6 +396,30 @@ def add_handlers():
     )
     # ─────────────────────────────────────────────────────────────────────────
 
+    # ── Anitsu Leech ──────────────────────────────────────────────────────────
+    # Comando principal: /anitsuleech
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsuleech,
+            filters=command(BotCommands.AnitsuLeechCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Dispatcher único para TODOS os callbacks do fluxo Anitsu (prefixo "ant:")
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            anitsu_callback,
+            filters=regex(r"^ant:\d+:"),
+        )
+    )
+    # Handler de texto para busca de anime
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsu_message_handler,
+        )
+    )
+    # ─────────────────────────────────────────────────────────────────────────
+
     if Config.SET_COMMANDS:
         global BOT_COMMANDS
 

@@ -43,6 +43,11 @@ from .mangaleech import (
     manga_callback,        # dispatcher único (substitui manga_source_callback,
     manga_message_handler, #   manga_mode_callback e manga_result_callback)
 )
+from .anitsuleech import (
+    anitsuleech,
+    anitsu_callback,
+    anitsu_message_handler,
+)
 
 __all__ = [
     "send_bot_settings",
@@ -111,4 +116,7 @@ __all__ = [
     "mangaleech",
     "manga_callback",
     "manga_message_handler",
+    "anitsuleech",
+    "anitsu_callback",
+    "anitsu_message_handler",
 ]
