@@ -15,7 +15,6 @@ import httpx
 
 from ...core.config_manager import Config
 from ... import LOGGER
-from ... import LOGGER
 
 
 class AnitsuClient:

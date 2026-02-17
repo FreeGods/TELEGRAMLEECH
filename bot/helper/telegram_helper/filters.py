@@ -80,3 +80,18 @@ class CustomFilters:
         )
 
     sudo = create(sudo_user)
+    async def anitsu_session_active(self, _, update):
+        """Filter que retorna True apenas se há uma sessão ativa do anitsu para o usuário"""
+        from ...modules.anitsuleech import anitsu_user_state
+        user_id = (update.from_user or update.sender_chat).id
+        return user_id in anitsu_user_state
+
+    anitsu_session = create(anitsu_session_active)
+
+    async def manga_session_active(self, _, update):
+        """Filter que retorna True apenas se há uma sessão ativa do mangaleech para o usuário"""
+        from ...modules.mangaleech import manga_user_state
+        user_id = (update.from_user or update.sender_chat).id
+        return user_id in manga_user_state
+
+    manga_session = create(manga_session_active)

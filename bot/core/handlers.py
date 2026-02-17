@@ -392,6 +392,7 @@ async def add_handlers():
     TgClient.bot.add_handler(
         MessageHandler(
             manga_message_handler,
+            filters=CustomFilters.manga_session,
         )
     )
     # ─────────────────────────────────────────────────────────────────────────
@@ -416,6 +417,7 @@ async def add_handlers():
     TgClient.bot.add_handler(
         MessageHandler(
             anitsu_message_handler,
+            filters=CustomFilters.anitsu_session,
         )
     )
     # ─────────────────────────────────────────────────────────────────────────
