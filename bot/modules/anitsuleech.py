@@ -119,6 +119,35 @@ def _safe_filename(name: str) -> str:
     return re.sub(r'[^\w\s\-\.]', '_', name, flags=re.UNICODE).strip()
 
 
+def parse_file_range(input_str: str) -> tuple[int, int] | tuple[None, None]:
+    """
+    Parse file range input (e.g., "1-10" or "5").
+    
+    Args:
+        input_str: Range string
+        
+    Returns:
+        Tuple of (start_idx, end_idx) or (None, None) if invalid
+    """
+    try:
+        if "-" in input_str:
+            parts = input_str.split("-")
+            if len(parts) != 2:
+                return None, None
+            start = int(parts[0].strip())
+            end = int(parts[1].strip())
+            if start > 0 and end > 0 and start <= end:
+                return start - 1, end - 1  # Converte para 0-based
+            return None, None
+        else:
+            num = int(input_str.strip())
+            if num > 0:
+                return num - 1, num - 1  # Single file
+            return None, None
+    except ValueError:
+        return None, None
+
+
 # ─────────────────────────────────────────────
 # Construção de menus
 # ─────────────────────────────────────────────
@@ -153,26 +182,17 @@ def _search_results_menu(user_id: int, results: list, page: int) -> tuple:
 
 
 def _folder_menu(user_id: int, path: str, files: list, parent: str | None) -> tuple:
-    """Menu de navegação de pasta."""
+    """Menu de navegação de pasta - mostra pastas e lista de arquivos."""
     folders = [f for f in files if f.get("is_directory")]
     docs    = [f for f in files if not f.get("is_directory")]
 
     b = ButtonMaker()
 
-    # Pastas
-    for folder in folders[:15]:  # limita a 15 para não estourar callback
-        fname = folder["name"][:45]
+    # Pastas (sem limite, pois callback é curto)
+    for folder in folders:
+        fname = folder["name"][:40]
         subpath = f"{path}/{folder['name']}" if path else folder["name"]
         b.data_button(f"📁 {fname}", f"ant:{user_id}:nav:{subpath}")
-
-    # Arquivos
-    for doc in docs[:10]:
-        fname = doc["name"][:40]
-        fpath = f"{path}/{doc['name']}" if path else doc["name"]
-        # Codifica o path em base64 para evitar overflow no callback_data
-        import base64
-        fpath_enc = base64.b64encode(fpath.encode()).decode()[:50]
-        b.data_button(f"🎬 {fname}", f"ant:{user_id}:file:{fpath_enc}")
 
     # Controles
     if parent is not None:
@@ -182,31 +202,43 @@ def _folder_menu(user_id: int, path: str, files: list, parent: str | None) -> tu
 
     path_display = _truncate(path or "/", 60)
     msg = f"📂 <b>{path_display}</b>\n\n"
+    
     if folders:
-        msg += f"📁 {len(folders)} pasta(s)\n"
+        msg += f"📁 <b>Pastas:</b> {len(folders)}\n"
+    
     if docs:
-        msg += f"🎬 {len(docs)} arquivo(s)"
+        msg += f"🎬 <b>Arquivos:</b> {len(docs)}\n\n"
+        # Lista os primeiros 15 arquivos como exemplo
+        msg += "<u>Arquivos encontrados:</u>\n"
+        for i, doc in enumerate(docs[:15], 1):
+            fname = doc["name"][:50]
+            msg += f"{i}. {fname}\n"
+        if len(docs) > 15:
+            msg += f"... e mais {len(docs) - 15}\n"
+        msg += f"\n📌 <b>Digite o intervalo:</b> Ex: 1-5 · 10 · 1-{len(docs)} · todos"
+    else:
+        msg += "❌ Nenhum arquivo nesta pasta"
+    
     return msg, b.build_menu(1)
 
 
-def _file_actions_menu(user_id: int, fpath: str, info: dict) -> tuple:
-    """Menu de ações para um arquivo."""
-    import base64
-    fpath_enc = base64.b64encode(fpath.encode()).decode()[:50]
-
+def _file_actions_menu(user_id: int, filepaths: list[str], sizes: list[int]) -> tuple:
+    """Menu de ações para um ou mais arquivos."""
     b = ButtonMaker()
-    b.data_button("🔗 Mirror",  f"ant:{user_id}:mirror:{fpath_enc}")
-    b.data_button("📥 Leech",   f"ant:{user_id}:leech:{fpath_enc}")
+    b.data_button("🔗 Mirror",  f"ant:{user_id}:act:mirror")
+    b.data_button("📥 Leech",   f"ant:{user_id}:act:leech")
     b.data_button("↩ Voltar",   f"ant:{user_id}:back:folder")
     b.data_button("❌ Cancelar", f"ant:{user_id}:cancel")
 
-    fname = info.get("filename", os.path.basename(fpath))[:60]
-    size  = get_readable_file_size(info.get("size", 0))
-    msg = (
-        f"📄 <b>{fname}</b>\n\n"
-        f"💾 Tamanho: {size}\n\n"
-        f"<b>Escolha a ação:</b>"
-    )
+    if len(filepaths) == 1:
+        fname = os.path.basename(filepaths[0])[:60]
+        size  = get_readable_file_size(sizes[0])
+        msg = f"📄 <b>{fname}</b>\n\n💾 Tamanho: {size}"
+    else:
+        total_size = sum(sizes)
+        msg = f"📦 <b>Selecionados {len(filepaths)} arquivo(s)</b>\n\n💾 Tamanho total: {get_readable_file_size(total_size)}"
+    
+    msg += "\n\n<b>Escolha a ação:</b>"
     return msg, b.build_menu(2)
 
 
@@ -376,10 +408,10 @@ async def anitsu_callback(client, query):
             await _navigate_folder(query, cb_user_id, state, param)
             return
 
-        # ── Seleção de arquivo ────────────────────
-        if action == "file":
+        # ── Ações após seleção de intervalo ──────
+        if action == "act":
             await query.answer()
-            await _handle_file_select(query, cb_user_id, state, param)
+            await _handle_file_action(query, cb_user_id, state, param)
             return
 
         # ── Mirror / Leech ────────────────────────
@@ -461,30 +493,52 @@ async def _navigate_folder(query, user_id: int, state: dict, path: str):
         return
 
     state["current_path"] = path
+    state["folder_files"] = files  # Armazena lista de arquivos para seleção
     LOGGER.info(f"[Anitsu] Exibindo {len(files)} itens em {path}")
     txt, markup = _folder_menu(user_id, path, files, parent)
     await edit_message(loading, txt, markup)
+    state["stage"] = "file_selection"  # Aguardando entrada do usuário
 
 
-async def _handle_file_select(query, user_id: int, state: dict, fpath_enc: str):
-    """Usuário selecionou um arquivo."""
-    import base64
-    try:
-        fpath = base64.b64decode(fpath_enc).decode()
-    except Exception:
-        await edit_message(query.message, "❌ Erro ao decodificar caminho do arquivo.")
+async def _handle_file_selection(query, user_id: int, state: dict, range_input: str):
+    """Usuário selecionou um intervalo de arquivos."""
+    files = state.get("folder_files", [])
+    docs = [f for f in files if not f.get("is_directory")]
+    
+    if not docs:
+        await edit_message(query.message, "❌ Nenhum arquivo na pasta.")
         return
-
-    loading = await edit_message(query.message, f"🔗 <b>Obtendo info...</b>")
-
-    try:
-        ac = await _get_anitsu_client_for_user(user_id)
-        LOGGER.debug(f"[Anitsu] Obtendo info do arquivo: {fpath}...")
-        info = ac.get_download_info(fpath)
-    except Exception as e:
-        LOGGER.exception(f"[Anitsu] Erro ao obter info do arquivo: {e}")
-        await edit_message(loading, f"❌ Erro: {str(e)[:100]}")
-        return
+    
+    # Parse do intervalo
+    if range_input.lower() == "todos":
+        start_idx, end_idx = 0, len(docs) - 1
+    else:
+        start_idx, end_idx = parse_file_range(range_input)
+        if start_idx is None or end_idx >= len(docs) or start_idx >= len(docs):
+            await edit_message(
+                query.message,
+                f"❌ Intervalo inválido. Tente 1-{len(docs)}, ou uma número único."
+            )
+            return
+    
+    selected_files = docs[start_idx:end_idx + 1]
+    path = state.get("current_path", "")
+    
+    # Constrói paths completos e obtém tamanhos
+    filepaths = []
+    sizes = []
+    for doc in selected_files:
+        fpath = f"{path}/{doc['name']}" if path else doc["name"]
+        filepaths.append(fpath)
+        sizes.append(doc.get("size", 0))
+    
+    LOGGER.info(f"[Anitsu] Usuário {user_id} selecionou {len(filepaths)} arquivo(s)")
+    state["selected_files"] = filepaths
+    state["selected_sizes"] = sizes
+    state["stage"] = "file_action"
+    
+    txt, markup = _file_actions_menu(user_id, filepaths, sizes)
+    await edit_message(query.message, txt, markup)
 
     if not info.get("ok"):
         await edit_message(loading, f"❌ Arquivo inacessível: {info.get('error', 'Desconhecido')}")
@@ -494,6 +548,67 @@ async def _handle_file_select(query, user_id: int, state: dict, fpath_enc: str):
     state["file_info"] = info
     txt, markup = _file_actions_menu(user_id, fpath, info)
     await edit_message(loading, txt, markup)
+
+
+
+
+async def _handle_file_action(query, user_id: int, state: dict, action: str):
+    """Processa ação de mirror/leech para múltiplos arquivos selecionados."""
+    if action not in ("mirror", "leech"):
+        return
+    
+    filepaths = state.get("selected_files", [])
+    
+    if not filepaths:
+        await edit_message(query.message, "❌ Nenhum arquivo selecionado.")
+        return
+    
+    LOGGER.info(f"[Anitsu] Iniciando {action.upper()} para {len(filepaths)} arquivo(s): {filepaths}")
+    _clear(user_id)
+    
+    # Gera URLs para todos os arquivos
+    try:
+        ac = await _get_anitsu_client_for_user(user_id)
+        urls = [ac.download_url(fpath) for fpath in filepaths]
+        LOGGER.info(f"[Anitsu] {len(urls)} URL(s) gerada(s)")
+    except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro ao gerar URLs: {e}")
+        await edit_message(query.message, f"❌ Erro ao gerar URLs: {str(e)[:100]}")
+        return
+    
+    # Cria comando com todas as URLs
+    urls_text = " ".join(urls)
+    if action == "mirror":
+        fake_text = f"/mirror {urls_text}"
+    else:
+        fake_text = f"/leech {urls_text}"
+    
+    # Mostra resumo da ação
+    file_list = "\n".join([os.path.basename(f) for f in filepaths[:5]])
+    if len(filepaths) > 5:
+        file_list += f"\n... e mais {len(filepaths) - 5}"
+    
+    await edit_message(
+        query.message,
+        f"🚀 <b>Iniciando {action.upper()}:</b>\n\n"
+        f"📦 Arquivos:\n{file_list}\n\n"
+        f"<i>Processando {len(filepaths)} arquivo(s)...</i>"
+    )
+    
+    # Chama handlers nativos de mirror/leech
+    try:
+        from ..modules.mirror_leech import mirror, leech
+        message = query.message
+        message.text = fake_text
+        
+        LOGGER.debug(f"[Anitsu] Chamando handler de {action} com {len(urls)} URL(s)")
+        if action == "mirror":
+            await mirror(None, message)
+        else:
+            await leech(None, message)
+    except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro ao chamar handler de {action}: {e}")
+        await edit_message(query.message, f"❌ Erro ao iniciar {action}: {str(e)[:100]}")
 
 
 async def _handle_download_action(query, user_id: int, state: dict, action: str, fpath_enc: str):
@@ -616,8 +731,25 @@ async def anitsu_message_handler(client, message):
             LOGGER.exception(f"[Anitsu] Erro ao processar busca para {user_id}: {e}")
             await send_message(message, f"❌ Erro ao processar busca: {str(e)[:100]}")
             _clear(user_id)
+    elif stage == "file_selection":
+        LOGGER.debug(f"[Anitsu] Processando seleção de arquivos para {user_id}")
+        try:
+            range_input = message.text.strip() if message.text else ""
+            if not range_input:
+                await send_message(message, "❌ Digite um intervalo válido. Ex: 1-5 · 10 · todos")
+                return
+            # Cria um objeto query fake para compatibilidade com _handle_file_selection
+            class FakeQuery:
+                def __init__(self, msg):
+                    self.message = msg
+            fake_query = FakeQuery(message)
+            await _handle_file_selection(fake_query, user_id, state, range_input)
+        except Exception as e:
+            LOGGER.exception(f"[Anitsu] Erro ao processar seleção de arquivos para {user_id}: {e}")
+            await send_message(message, f"❌ Erro ao processar seleção: {str(e)[:100]}")
+            _clear(user_id)
     else:
-        LOGGER.debug(f"[Anitsu] Stage '{stage}' não é 'waiting_search', ignorando mensagem")
+        LOGGER.debug(f"[Anitsu] Stage '{stage}' não é 'waiting_search' ou 'file_selection', ignorando mensagem")
 
 
 async def _handle_search(client, message, user_id: int, state: dict):
