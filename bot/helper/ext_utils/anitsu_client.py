@@ -5,6 +5,13 @@ Async client for nuvem.anitsu.moe API integration.
 Configuration:
   Set ANITSU_COOKIE_FILE in config.py or as environment variable.
   Cookies are loaded from a Netscape-format cookie file.
+  
+  Priority order:
+  1. Provided cookie_file parameter
+  2. Config.ANITSU_COOKIE_FILE
+  3. anitsu_cookies.txt (in current directory)
+  4. anitsu_cookies (without extension)
+  5. cookies.txt
 """
 
 import os
@@ -20,17 +27,76 @@ from ... import LOGGER
 class AnitsuClient:
     """Async client for Anitsu Cloud API."""
 
-    def __init__(self, cookie_file: str):
-        self.cookie_file = cookie_file
+    def __init__(self, cookie_file: Optional[str] = None):
+        """
+        Initialize Anitsu client with cookies.
+        
+        Args:
+            cookie_file: Path to cookie file. If None, tries default locations.
+        
+        Raises:
+            FileNotFoundError: If no valid cookie file is found.
+            RuntimeError: If cookie file cannot be loaded.
+        """
+        self.cookie_file = None
         self.backend = "https://nuvem.anitsu.moe"
         self._cookies: Optional[httpx.Cookies] = None
-        LOGGER.debug(f"[AnitsuClient] Carregando cookies de: {cookie_file}")
+        
+        # Determine which cookie file to use
+        self.cookie_file = self._find_cookie_file(cookie_file)
+        
+        if not self.cookie_file:
+            error_msg = (
+                "Anitsu cookie file not found. "
+                "Set ANITSU_COOKIE_FILE in config.py or upload anitsu_cookies.txt via botset private."
+            )
+            LOGGER.error(f"[AnitsuClient] {error_msg}")
+            raise FileNotFoundError(error_msg)
+        
+        LOGGER.debug(f"[AnitsuClient] Carregando cookies de: {self.cookie_file}")
         self._load_cookies()
         LOGGER.debug(f"[AnitsuClient] Cookies carregados com sucesso")
+    
+    def _find_cookie_file(self, provided_file: Optional[str] = None) -> Optional[str]:
+        """
+        Find a valid cookie file from multiple locations.
+        
+        Priority:
+        1. Provided file parameter
+        2. Config.ANITSU_COOKIE_FILE
+        3. Default filenames (anitsu_cookies.txt, anitsu_cookies, cookies.txt)
+        """
+        candidates = []
+        
+        # 1. Provided file
+        if provided_file:
+            candidates.append(provided_file)
+        
+        # 2. Config setting
+        config_file = getattr(Config, "ANITSU_COOKIE_FILE", None)
+        if config_file and config_file.strip():
+            candidates.append(config_file.strip())
+        
+        # 3. Default filenames
+        candidates.extend([
+            "anitsu_cookies.txt",
+            "anitsu_cookies",
+            "cookies.txt",
+        ])
+        
+        # Try each candidate
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                LOGGER.debug(f"[AnitsuClient] Found cookie file: {candidate}")
+                return candidate
+        
+        LOGGER.warning(f"[AnitsuClient] Nenhum arquivo de cookies encontrado. Candidates: {candidates}")
+        return None
 
+    
     def _load_cookies(self):
         """Load cookies from Netscape-format file."""
-        if not os.path.exists(self.cookie_file):
+        if not self.cookie_file or not os.path.exists(self.cookie_file):
             error_msg = (
                 f"Anitsu cookie file not found: {self.cookie_file}\n"
                 f"Export cookies from browser using an extension and save to this path."
@@ -38,20 +104,28 @@ class AnitsuClient:
             LOGGER.error(f"[AnitsuClient] {error_msg}")
             raise FileNotFoundError(error_msg)
 
-        LOGGER.debug(f"[AnitsuClient] Parsing cookie file: {self.cookie_file}")
-        jar = http.cookiejar.MozillaCookieJar(self.cookie_file)
-        jar.load(ignore_discard=True, ignore_expires=True)
+        try:
+            LOGGER.debug(f"[AnitsuClient] Parsing cookie file: {self.cookie_file}")
+            jar = http.cookiejar.MozillaCookieJar(self.cookie_file)
+            jar.load(ignore_discard=True, ignore_expires=True)
 
-        # Convert to httpx.Cookies
-        self._cookies = httpx.Cookies()
-        for cookie in jar:
-            self._cookies.set(
-                cookie.name,
-                cookie.value,
-                domain=cookie.domain,
-                path=cookie.path,
-            )
-        LOGGER.debug(f"[AnitsuClient] {len(jar)} cookies carregados do arquivo")
+            # Convert to httpx.Cookies
+            self._cookies = httpx.Cookies()
+            for cookie in jar:
+                self._cookies.set(
+                    cookie.name,
+                    cookie.value,
+                    domain=cookie.domain,
+                    path=cookie.path,
+                )
+            LOGGER.debug(f"[AnitsuClient] {len(jar)} cookies carregados do arquivo")
+            
+            if len(jar) == 0:
+                LOGGER.warning(f"[AnitsuClient] Arquivo de cookies está vazio ou inválido")
+        
+        except Exception as e:
+            LOGGER.error(f"[AnitsuClient] Erro ao carregar cookies: {e}")
+            raise RuntimeError(f"Falha ao carregar cookies: {str(e)}")
 
     def refresh_cookies(self):
         """Reload cookies from file (use after exporting new cookies)."""
@@ -191,43 +265,72 @@ class AnitsuClient:
 # Singleton instance
 # ─────────────────────────────────────────────
 _client: Optional[AnitsuClient] = None
+_client_lock = None  # Will be set to asyncio.Lock if needed
 
 
-def get_anitsu_client() -> AnitsuClient:
-    """Get or create the singleton Anitsu client instance."""
+def get_anitsu_client(cookie_file: Optional[str] = None) -> AnitsuClient:
+    """
+    Get or create the Anitsu client instance.
+    
+    Args:
+        cookie_file: Optional path to cookie file. If provided, creates/returns client with that file.
+        
+    Returns:
+        AnitsuClient instance
+        
+    Raises:
+        FileNotFoundError: If no valid cookie file is found
+        RuntimeError: If client cannot be initialized
+    """
     global _client
-    if _client is None:
-        cookie_file = getattr(Config, "ANITSU_COOKIE_FILE", None)
-        if not cookie_file:
-            error_msg = (
-                "ANITSU_COOKIE_FILE not configured. "
-                "Set it in config.py or as environment variable."
-            )
-            LOGGER.error(f"[AnitsuClient] {error_msg}")
-            raise RuntimeError(error_msg)
+    
+    # If a specific cookie_file is provided, always create a new instance
+    if cookie_file:
         try:
-            LOGGER.info(f"[AnitsuClient] Inicializando cliente com cookies de: {cookie_file}")
-            _client = AnitsuClient(cookie_file)
-            LOGGER.info(f"[AnitsuClient] Cliente inicializado com sucesso")
+            LOGGER.debug(f"[AnitsuClient] Criando novo cliente com cookies de: {cookie_file}")
+            return AnitsuClient(cookie_file)
+        except Exception as e:
+            LOGGER.error(f"[AnitsuClient] Erro ao criar cliente com arquivo {cookie_file}: {e}")
+            raise
+    
+    # Otherwise, use singleton
+    if _client is None:
+        try:
+            LOGGER.info(f"[AnitsuClient] Inicializando cliente Anitsu singleton")
+            _client = AnitsuClient()
+            LOGGER.info(f"[AnitsuClient] Cliente inicializado com sucesso de: {_client.cookie_file}")
         except FileNotFoundError as e:
             LOGGER.error(f"[AnitsuClient] Arquivo de cookies não encontrado: {e}")
             raise
         except Exception as e:
             LOGGER.exception(f"[AnitsuClient] Erro ao inicializar: {e}")
             raise
+    
     return _client
 
 
-def refresh_anitsu_client():
-    """Force reload of Anitsu client cookies."""
+def refresh_anitsu_client(cookie_file: Optional[str] = None):
+    """
+    Force reload of Anitsu client cookies.
+    
+    Args:
+        cookie_file: Optional new cookie file path
+    """
     global _client
-    if _client:
-        try:
-            LOGGER.info(f"[AnitsuClient] Recarregando cookies")
+    try:
+        if cookie_file:
+            LOGGER.info(f"[AnitsuClient] Recarregando cookies de novo arquivo: {cookie_file}")
+            _client = AnitsuClient(cookie_file)
+        elif _client:
+            LOGGER.info(f"[AnitsuClient] Recarregando cookies do arquivo atual: {_client.cookie_file}")
             _client.refresh_cookies()
-            LOGGER.info(f"[AnitsuClient] Cookies recarregados com sucesso")
-        except Exception as e:
-            LOGGER.exception(f"[AnitsuClient] Erro ao recarregar cookies: {e}")
-            raise
-    else:
-        LOGGER.warning(f"[AnitsuClient] Tentativa de recarregar cookies, mas cliente não foi inicializado")
+        else:
+            LOGGER.warning(f"[AnitsuClient] Tentativa de recarregar cookies, mas cliente não foi inicializado")
+            _client = AnitsuClient()
+        LOGGER.info(f"[AnitsuClient] Cookies recarregados com sucesso")
+    except Exception as e:
+        LOGGER.exception(f"[AnitsuClient] Erro ao recarregar cookies: {e}")
+        raise
+
+
+

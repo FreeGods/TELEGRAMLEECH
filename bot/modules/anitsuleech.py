@@ -30,12 +30,13 @@ from ..helper.telegram_helper.bot_commands import BotCommands
 
 # Importa o cliente Anitsu (assumindo que está em helper/ext_utils/)
 try:
-    from ..helper.ext_utils.anitsu_client import AnitsuClient, get_anitsu_client
+    from ..helper.ext_utils.anitsu_client import AnitsuClient, get_anitsu_client, refresh_anitsu_client
 except Exception as e:
     # Fallback se o cliente não estiver integrado ainda — registrar exceção completa
     LOGGER.exception("anitsu_client não encontrado ou erro ao importar — /anitsuleech não funcionará: %s", e)
     AnitsuClient = None
     get_anitsu_client = None
+    refresh_anitsu_client = None
 
 
 # ─────────────────────────────────────────────
@@ -71,6 +72,38 @@ def _touch(user_id: int):
 
 def _clear(user_id: int):
     anitsu_user_state.pop(user_id, None)
+
+
+async def _get_anitsu_client_for_user(user_id: int):
+    """
+    Get Anitsu client for a specific user.
+    
+    Tries to use user-specific cookie if available, falls back to global client.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        AnitsuClient instance
+        
+    Raises:
+        Exception: If client cannot be initialized
+    """
+    from .. import user_data
+    
+    user_cookie_file = None
+    if user_id in user_data and "USER_COOKIE_FILE" in user_data[user_id]:
+        user_cookie_file = user_data[user_id].get("USER_COOKIE_FILE")
+        LOGGER.debug(f"[Anitsu] Cookie file do usuário {user_id} encontrado: {user_cookie_file}")
+    
+    try:
+        if user_cookie_file:
+            return get_anitsu_client(cookie_file=user_cookie_file)
+        else:
+            return get_anitsu_client()
+    except Exception as e:
+        LOGGER.error(f"[Anitsu] Erro ao obter cliente para usuário {user_id}: {e}")
+        raise
 
 
 def _truncate(path: str, maxlen: int = MAX_PATH_LEN) -> str:
@@ -184,23 +217,12 @@ def _file_actions_menu(user_id: int, fpath: str, info: dict) -> tuple:
 @new_task
 async def anitsuleech(client, message):
     """Ponto de entrada: /anitsuleech"""
+    from .. import user_data
+    
     # Verifica se o cliente está disponível
     if not get_anitsu_client:
         LOGGER.error("[Anitsu] Client function não disponível - import falhou")
         await send_message(message, "❌ Anitsu client não configurado. Contate o admin.")
-        return
-
-    # Tenta instanciar o cliente
-    try:
-        ac = get_anitsu_client()
-        LOGGER.info(f"[Anitsu] Cliente inicializado com sucesso")
-    except RuntimeError as e:
-        LOGGER.error(f"[Anitsu] Erro ao inicializar cliente: {e}")
-        await send_message(message, f"❌ Anitsu não configurado: {str(e)}")
-        return
-    except Exception as e:
-        LOGGER.exception(f"[Anitsu] Erro inesperado ao inicializar:** {e}")
-        await send_message(message, f"❌ Erro ao inicializar Anitsu: {str(e)}")
         return
 
     user = message.from_user
@@ -208,6 +230,41 @@ async def anitsuleech(client, message):
         LOGGER.warning("[Anitsu] Mensagem sem usuário")
         return
     user_id = user.id
+
+    # Tenta obter arquivo de cookie do usuário se disponível
+    user_cookie_file = None
+    if user_id in user_data and "USER_COOKIE_FILE" in user_data[user_id]:
+        user_cookie_file = user_data[user_id].get("USER_COOKIE_FILE")
+        LOGGER.debug(f"[Anitsu] Cookie file do usuário encontrado: {user_cookie_file}")
+
+    # Tenta instanciar o cliente
+    try:
+        LOGGER.info(f"[Anitsu] Inicializando cliente Anitsu para usuário {user_id}")
+        ac = get_anitsu_client(cookie_file=user_cookie_file) if user_cookie_file else get_anitsu_client()
+        LOGGER.info(f"[Anitsu] Cliente inicializado com sucesso de: {ac.cookie_file}")
+    except FileNotFoundError as e:
+        LOGGER.error(f"[Anitsu] Arquivo de cookies não encontrado: {e}")
+        msg = (
+            "❌ **Anitsu Cookie não configurado**\n\n"
+            "Para usar este comando, você precisa configurar os cookies do Anitsu.\n\n"
+            "**Opções:**\n"
+            "1. Use `/bsettings` → **Private Files** → **Add/Delete File**\n"
+            "2. Envie o arquivo `anitsu_cookies.txt` (exportado do navegador)\n\n"
+            "**Como exportar cookies:**\n"
+            "- Use uma extensão do navegador (ex: \"Cookie Editor\")\n"
+            "- Exporte no formato Netscape (o padrão)\n"
+            "- Envie via botset private"
+        )
+        await send_message(message, msg)
+        return
+    except RuntimeError as e:
+        LOGGER.error(f"[Anitsu] Erro ao inicializar cliente: {e}")
+        await send_message(message, f"❌ Erro ao inicializar Anitsu: {str(e)}")
+        return
+    except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro inesperado ao inicializar: {e}")
+        await send_message(message, f"❌ Erro ao inicializar Anitsu: {str(e)}")
+        return
 
     LOGGER.info(f"[Anitsu] Iniciando /anitsuleech para usuário {user_id}")
     _clear(user_id)
@@ -374,7 +431,7 @@ async def _navigate_folder(query, user_id: int, state: dict, path: str):
     loading = await edit_message(query.message, f"📂 <b>Carregando...</b> {_truncate(path, 40)}")
 
     try:
-        ac = get_anitsu_client()
+        ac = await _get_anitsu_client_for_user(user_id)
         LOGGER.debug(f"[Anitsu] Cliente obtido, chamando list_files({path})...")
         # IMPORTANTE: list_files é assíncrono, deve usar await
         data = await ac.list_files(path)
@@ -383,7 +440,7 @@ async def _navigate_folder(query, user_id: int, state: dict, path: str):
         LOGGER.exception(f"[Anitsu] Erro ao navegar pasta {path}: {e}")
         await edit_message(loading, f"❌ Erro ao acessar pasta: {str(e)[:100]}")
         return
-
+    
     if not data:
         LOGGER.warning(f"[Anitsu] list_files retornou None ou vazio")
         await edit_message(loading, f"❌ Resposta vazia do servidor")
@@ -421,7 +478,7 @@ async def _handle_file_select(query, user_id: int, state: dict, fpath_enc: str):
     loading = await edit_message(query.message, f"🔗 <b>Obtendo info...</b>")
 
     try:
-        ac = get_anitsu_client()
+        ac = await _get_anitsu_client_for_user(user_id)
         LOGGER.debug(f"[Anitsu] Obtendo info do arquivo: {fpath}...")
         info = ac.get_download_info(fpath)
     except Exception as e:
@@ -450,7 +507,7 @@ async def _handle_download_action(query, user_id: int, state: dict, action: str,
         return
 
     try:
-        ac = get_anitsu_client()
+        ac = await _get_anitsu_client_for_user(user_id)
         url = ac.download_url(fpath)
         LOGGER.info(f"[Anitsu] URL gerada para {action}: {url[:80]}...")
     except Exception as e:
@@ -574,7 +631,7 @@ async def _handle_search(client, message, user_id: int, state: dict):
     loading = await send_message(message, f"🔍 <b>Buscando:</b> {query}...")
 
     try:
-        ac = get_anitsu_client()
+        ac = await _get_anitsu_client_for_user(user_id)
         LOGGER.debug(f"[Anitsu] Chamando search({query})...")
         # IMPORTANTE: search é assíncrono, deve usar await
         data = await ac.search(query)
@@ -619,3 +676,40 @@ async def _handle_search(client, message, user_id: int, state: dict):
     txt, markup = _search_results_menu(user_id, results, 0)
     await edit_message(loading, txt, markup)
     state["active_msg_id"] = loading.id
+
+
+# ─────────────────────────────────────────────
+# Comando de Refresh de Cookies
+# ─────────────────────────────────────────────
+
+@new_task
+async def anitsurefresh(client, message):
+    """Recarrega cookies do Anitsu."""
+    from .. import user_data
+    
+    user = message.from_user
+    if not user:
+        return
+    user_id = user.id
+
+    try:
+        # Procura arquivo de cookie do usuário
+        user_cookie_file = None
+        if user_id in user_data and "USER_COOKIE_FILE" in user_data[user_id]:
+            user_cookie_file = user_data[user_id].get("USER_COOKIE_FILE")
+
+        # Recarrega cookies
+        if get_anitsu_client:
+            LOGGER.info(f"[Anitsu] Recarregando cookies para usuário {user_id}")
+            refresh_anitsu_client(cookie_file=user_cookie_file)
+            await send_message(message, "✅ Cookies do Anitsu recarregados com sucesso!")
+        else:
+            await send_message(message, "❌ Anitsu client não disponível")
+    except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro ao recarregar cookies: {e}")
+        await send_message(
+            message,
+            f"❌ Erro ao recarregar cookies:\n\n<code>{str(e)}</code>\n\n"
+            "Verifique se o arquivo de cookies existe e é válido."
+        )
+
