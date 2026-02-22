@@ -227,6 +227,20 @@ def _chapters_menu(user_id: int, info: dict, chapters: list, source: str) -> str
     return msg
 
 
+def _cover_menu(user_id: int) -> tuple:
+    """Menu para perguntar se o usuário quer adicionar capa aos arquivos."""
+    b = ButtonMaker()
+    b.data_button("✅ Sim, adicionar capa", f"mng:{user_id}:cover:yes")
+    b.data_button("❌ Não, sem capa", f"mng:{user_id}:cover:no")
+    b.data_button("↩ Voltar",        f"mng:{user_id}:back:chapters")
+    
+    msg = "🖼️ <b>Adicionar capa aos arquivos?</b>\n\n"
+    msg += "⚠️ <b>Aviso:</b> A capa aumentará o tamanho dos arquivos.\n\n"
+    msg += "Se <b>sim</b>, você precisará enviar um link de uma imagem (do Telegram, Web, etc)."
+    
+    return msg, b.build_menu(1)
+
+
 # ──────────────────────────────────────────────
 # Comando principal
 # ──────────────────────────────────────────────
@@ -375,6 +389,24 @@ async def manga_callback(client, query):
         await edit_message(query.message, f"🔍 <b>Nova busca:</b>\nDigite o nome do mangá ({example}):")
         return
 
+    # ── Decisão sobre capa ────────────────────
+    if action == "cover":
+        await query.answer()
+        if param == "yes":
+            state["add_cover"] = True
+            state["stage"] = "waiting_cover_link"
+            msg = "🖼️ <b>Envie um link de imagem para usar como capa:</b>\n\n"
+            msg += "<i>Exemplos:</i>\n"
+            msg += "• Link direto: https://exemplo.com/imagem.jpg\n"
+            msg += "• Arquivo do Telegram (após enviar imagem, copie o link direto)"
+            await edit_message(query.message, msg)
+        elif param == "no":
+            state["add_cover"] = False
+            # Processa o download sem capa
+            state["stage"] = "downloading"
+            await _start_download(query.message, state)
+        return
+
     await query.answer()
 
 
@@ -414,6 +446,15 @@ async def _handle_back(query, user_id: int, state: dict, target: str):
             state["stage"] = "results"
             txt, markup = _results_menu(user_id, results, page)
         await edit_message(query.message, txt, markup)
+
+    elif target == "chapters":
+        # Volta para a fase de entrada de capítulos
+        info = state.get("manga_info", {})
+        chapters = state.get("chapters", [])
+        source = state.get("source", "flower")
+        state["stage"] = "waiting_chapters"
+        msg = _chapters_menu(user_id, info, chapters, source)
+        await edit_message(query.message, msg)
 
 
 # ──────────────────────────────────────────────
@@ -528,6 +569,8 @@ async def manga_message_handler(client, message):
         await _handle_text_input(client, message, user_id, state, stage)
     elif stage == "waiting_chapters":
         await _handle_chapter_input(client, message, user_id, state)
+    elif stage == "waiting_cover_link":
+        await _handle_cover_link_input(client, message, user_id, state)
 
 
 # ──────────────────────────────────────────────
@@ -629,13 +672,6 @@ async def _handle_chapter_input(client, message, user_id: int, state: dict):
     chapters   = state.get("chapters", [])
     url        = state.get("selected_url")
     source     = state.get("source", "flower")
-    use_zip    = state.get("use_zip", False)
-    info       = state.get("manga_info", {})
-
-    # Nome limpo do mangá para usar em arquivos e mensagens
-    manga_title    = info.get("title") or "Manga"
-    manga_filename = _safe_filename(manga_title)   # ex: "One_Piece"
-    cover_url      = info.get("image", "")
 
     if not all([downloader, chapters, url]):
         await send_message(message, "❌ Erro de sessão. Use /mangaleech novamente.")
@@ -666,6 +702,66 @@ async def _handle_chapter_input(client, message, user_id: int, state: dict):
         await send_message(message, "❌ Nenhum capítulo encontrado nesse intervalo.")
         return
 
+    # Armazena os capítulos selecionados no estado
+    state["selected_chapters"] = selected_chapters
+    state["stage"] = "waiting_cover_choice"
+    
+    # Mostra o menu de decisão sobre capa
+    loading = await send_message(message, "⏳ <b>Preparando…</b>")
+    txt, markup = _cover_menu(user_id)
+    await edit_message(loading, txt, markup)
+    state["active_msg_id"] = loading.id
+
+
+# ──────────────────────────────────────────────
+# Processar entrada de link de capa
+# ──────────────────────────────────────────────
+
+async def _handle_cover_link_input(client, message, user_id: int, state: dict):
+    """Processa o link de imagem enviado pelo usuário para usar como capa."""
+    image_url = message.text.strip() if message.text else ""
+    
+    if not image_url:
+        await send_message(message, "❌ Você precisa enviar um link válido.")
+        return
+    
+    if not image_url.startswith("http"):
+        await send_message(message, "❌ Link inválido. Deve começar com 'http://' ou 'https://'")
+        return
+    
+    # Armazena o link de capa fornecido pelo usuário
+    state["cover_url"] = image_url
+    state["stage"] = "downloading"
+    
+    # Inicia o download
+    await _start_download(message, state)
+
+
+# ──────────────────────────────────────────────
+# Iniciar download dos capítulos
+# ──────────────────────────────────────────────
+
+async def _start_download(message, state: dict):
+    """Inicia o download dos capítulos com ou sem capa."""
+    user_id = message.from_user.id
+    downloader = state.get("downloader")
+    selected_chapters = state.get("selected_chapters", [])
+    url = state.get("selected_url")
+    source = state.get("source", "flower")
+    use_zip = state.get("use_zip", False)
+    info = state.get("manga_info", {})
+    add_cover = state.get("add_cover", False)
+    cover_url = state.get("cover_url") if add_cover else None
+    
+    # Nome limpo do mangá para usar em arquivos e mensagens
+    manga_title = info.get("title") or "Manga"
+    manga_filename = _safe_filename(manga_title)
+
+    if not all([downloader, selected_chapters, url]):
+        await send_message(message, "❌ Erro de sessão. Use /mangaleech novamente.")
+        _clear(user_id)
+        return
+
     # Libera estado antes de um processo longo
     _clear(user_id)
     dl_msg = await send_message(
@@ -674,7 +770,7 @@ async def _handle_chapter_input(client, message, user_id: int, state: dict):
     )
     download_dir = f"{DOWNLOAD_DIR}manga/{user_id}_{int(time())}"
 
-    # Baixa a capa uma vez para embutir em todos os CBZs
+    # Baixa a capa se o usuário escolheu adicionar
     cover_data: bytes | None = None
     if cover_url:
         await edit_message(dl_msg, f"🖼️ <b>Baixando capa de</b> <i>{manga_title}</i>…")
@@ -682,7 +778,7 @@ async def _handle_chapter_input(client, message, user_id: int, state: dict):
         if cover_data:
             LOGGER.info(f"Manga cover fetched: {len(cover_data)} bytes")
         else:
-            LOGGER.warning(f"Manga cover unavailable for: {manga_title}")
+            LOGGER.warning(f"Manga cover unavailable: {cover_url}")
 
     results: list[tuple[str, int, float]] = []   # (cbz_path, page_count, cap_num)
 
@@ -712,13 +808,13 @@ async def _handle_chapter_input(client, message, user_id: int, state: dict):
             if cbz_path:
                 # Renomeia o arquivo para incluir o título do mangá
                 # ex: /path/cap_01100.cbz  →  /path/One_Piece_Cap_01100.cbz
-                old_base = os.path.basename(cbz_path)          # cap_01100.cbz
-                cap_part = old_base                             # fallback
+                old_base = os.path.basename(cbz_path)
+                cap_part = old_base
                 # Extrai a parte numérica do nome gerado pelo downloader
                 m = re.match(r'(cap_.+)\.cbz$', old_base, re.I)
                 if m:
-                    cap_part = m.group(1)                       # cap_01100
-                new_name = f"{manga_filename}_{cap_part}.cbz"  # One_Piece_cap_01100.cbz
+                    cap_part = m.group(1)
+                new_name = f"{manga_filename}_{cap_part}.cbz"
                 new_path = os.path.join(os.path.dirname(cbz_path), new_name)
                 try:
                     os.rename(cbz_path, new_path)
