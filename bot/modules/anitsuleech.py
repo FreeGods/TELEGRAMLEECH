@@ -188,15 +188,34 @@ def _folder_menu(user_id: int, path: str, files: list, parent: str | None) -> tu
 
     b = ButtonMaker()
 
-    # Pastas (sem limite, pois callback é curto)
+    # Prepare um mapa curto de callback ids para evitar callback_data muito longo
+    user_state = anitsu_user_state.setdefault(user_id, {})
+    cb_map = user_state.setdefault("cb_map", {})
+    cb_counter = user_state.get("_cb_counter", 0)
+
+    def _store_cb(val: str) -> str:
+        nonlocal cb_counter
+        cb_counter += 1
+        key = f"c{cb_counter}"
+        cb_map[key] = val
+        user_state["_cb_counter"] = cb_counter
+        return key
+
+    # Pastas (armazenamos subpath no mapa e usamos id curto no callback)
     for folder in folders:
         fname = folder["name"][:40]
         subpath = f"{path}/{folder['name']}" if path else folder["name"]
-        b.data_button(f"📁 {fname}", f"ant:{user_id}:nav:{subpath}")
+        key = _store_cb(subpath)
+        b.data_button(f"📁 {fname}", f"ant:{user_id}:navid:{key}")
 
     # Controles
     if parent is not None:
-        b.data_button("↩ Voltar", f"ant:{user_id}:nav:{parent}" if parent else f"ant:{user_id}:back:results")
+        # parent pode ser longo — usar cb_map
+        if parent:
+            pkey = _store_cb(parent)
+            b.data_button("↩ Voltar", f"ant:{user_id}:navid:{pkey}")
+        else:
+            b.data_button("↩ Voltar", f"ant:{user_id}:back:results")
     b.data_button("🔍 Nova busca", f"ant:{user_id}:newsearch")
     b.data_button("❌ Cancelar",   f"ant:{user_id}:cancel")
 
@@ -403,9 +422,16 @@ async def anitsu_callback(client, query):
             return
 
         # ── Navegação de pasta ────────────────────
-        if action == "nav":
+        if action in ("nav", "navid"):
             await query.answer()
-            await _navigate_folder(query, cb_user_id, state, param)
+            real_param = param
+            if action == "navid":
+                real_param = state.get("cb_map", {}).get(param)
+                if real_param is None:
+                    LOGGER.warning(f"[Anitsu] Callback id não encontrado: {param}")
+                    await query.answer("❌ Dados inválidos", show_alert=True)
+                    return
+            await _navigate_folder(query, cb_user_id, state, real_param)
             return
 
         # ── Ações após seleção de intervalo ──────
@@ -539,17 +565,6 @@ async def _handle_file_selection(query, user_id: int, state: dict, range_input: 
     
     txt, markup = _file_actions_menu(user_id, filepaths, sizes)
     await edit_message(query.message, txt, markup)
-
-    if not info.get("ok"):
-        await edit_message(loading, f"❌ Arquivo inacessível: {info.get('error', 'Desconhecido')}")
-        return
-
-    state["selected_file"] = fpath
-    state["file_info"] = info
-    txt, markup = _file_actions_menu(user_id, fpath, info)
-    await edit_message(loading, txt, markup)
-
-
 
 
 async def _handle_file_action(query, user_id: int, state: dict, action: str):
