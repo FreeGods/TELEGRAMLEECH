@@ -111,6 +111,8 @@ class AnitsuClient:
 
             # Convert to httpx.Cookies
             self._cookies = httpx.Cookies()
+            # Also build a Cookie header string to force-send cookies when necessary
+            cookie_pairs = []
             for cookie in jar:
                 self._cookies.set(
                     cookie.name,
@@ -118,6 +120,11 @@ class AnitsuClient:
                     domain=cookie.domain,
                     path=cookie.path,
                 )
+                try:
+                    cookie_pairs.append(f"{cookie.name}={cookie.value}")
+                except Exception:
+                    continue
+            self._cookie_header = "; ".join(cookie_pairs) if cookie_pairs else ""
             LOGGER.debug(f"[AnitsuClient] {len(jar)} cookies carregados do arquivo")
             
             if len(jar) == 0:
@@ -139,6 +146,11 @@ class AnitsuClient:
             "Accept": "application/json",
         }
 
+        # If we built a Cookie header from the cookie file, include it to ensure
+        # cookies are sent even when domain/path attributes would prevent it.
+        if getattr(self, "_cookie_header", None):
+            headers["Cookie"] = self._cookie_header
+
         LOGGER.debug(f"[AnitsuClient] GET {endpoint} com params: {params}")
 
         async with httpx.AsyncClient(cookies=self._cookies, timeout=30, follow_redirects=True) as client:
@@ -152,10 +164,17 @@ class AnitsuClient:
                 LOGGER.debug(f"[AnitsuClient] Status: {resp.status_code}")
 
                 if resp.status_code == 401:
-                    LOGGER.warning(f"[AnitsuClient] Sessão expirada (401)")
+                    # Log response body to help debug why cookies are rejected
+                    txt = None
+                    try:
+                        txt = resp.text
+                    except Exception:
+                        txt = "<no response body>"
+                    LOGGER.warning(f"[AnitsuClient] Sessão expirada (401). Response: {txt}")
                     return {
                         "error": "session_expired",
                         "detail": "Sessão expirada. Exporte novos cookies e use /anitsurefresh.",
+                        "response": txt,
                     }
                 if resp.status_code == 404:
                     LOGGER.warning(f"[AnitsuClient] Não encontrado (404): {endpoint}")
