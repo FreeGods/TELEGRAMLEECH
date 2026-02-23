@@ -398,6 +398,22 @@ async def add_handlers():
     # ─────────────────────────────────────────────────────────────────────────
 
     # ── Anitsu Leech ──────────────────────────────────────────────────────────
+    # Diagnostic command: /anitsucheck
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsucheck,
+            filters=command(BotCommands.AnitsuCheckCommand if hasattr(BotCommands, 'AnitsuCheckCommand') else 'anitsucheck', case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Refresh command: /anitsurefresh
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsurefresh,
+            filters=command(BotCommands.AnitsuRefreshCommand if hasattr(BotCommands, 'AnitsuRefreshCommand') else 'anitsurefresh', case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
     # Comando principal: /anitsuleech
     TgClient.bot.add_handler(
         MessageHandler(

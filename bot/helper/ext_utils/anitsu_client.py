@@ -105,7 +105,11 @@ class AnitsuClient:
             raise FileNotFoundError(error_msg)
 
         try:
-            LOGGER.debug(f"[AnitsuClient] Parsing cookie file: {self.cookie_file}")
+            LOGGER.info(f"[AnitsuClient] Parsing cookie file: {self.cookie_file}")
+            # Check file size and content
+            file_size = os.path.getsize(self.cookie_file)
+            LOGGER.info(f"[AnitsuClient] Cookie file size: {file_size} bytes")
+            
             jar = http.cookiejar.MozillaCookieJar(self.cookie_file)
             jar.load(ignore_discard=True, ignore_expires=True)
 
@@ -122,13 +126,17 @@ class AnitsuClient:
                 )
                 try:
                     cookie_pairs.append(f"{cookie.name}={cookie.value}")
-                except Exception:
+                    LOGGER.debug(f"[AnitsuClient] Loaded cookie: {cookie.name} from domain {cookie.domain}")
+                except Exception as e:
+                    LOGGER.debug(f"[AnitsuClient] Failed to process cookie {cookie.name}: {e}")
                     continue
             self._cookie_header = "; ".join(cookie_pairs) if cookie_pairs else ""
-            LOGGER.debug(f"[AnitsuClient] {len(jar)} cookies carregados do arquivo")
+            LOGGER.info(f"[AnitsuClient] {len(jar)} cookies carregados do arquivo")
+            LOGGER.info(f"[AnitsuClient] Cookie header: {self._cookie_header[:100]}..." if len(self._cookie_header) > 100 else f"[AnitsuClient] Cookie header: {self._cookie_header}")
             
             if len(jar) == 0:
-                LOGGER.warning(f"[AnitsuClient] Arquivo de cookies está vazio ou inválido")
+                LOGGER.error(f"[AnitsuClient] ❌ CRITICAL: Arquivo de cookies está vazio ou inválido!")
+                LOGGER.info(f"[AnitsuClient] Verifique se o arquivo foi exportado corretamente")
         
         except Exception as e:
             LOGGER.error(f"[AnitsuClient] Erro ao carregar cookies: {e}")
@@ -150,6 +158,9 @@ class AnitsuClient:
         # cookies are sent even when domain/path attributes would prevent it.
         if getattr(self, "_cookie_header", None):
             headers["Cookie"] = self._cookie_header
+            LOGGER.debug(f"[AnitsuClient] Enviando Cookie header com {len(self._cookie_header.split(';'))} cookies")
+        else:
+            LOGGER.warning(f"[AnitsuClient] ⚠️ Nenhum cookie header disponível para enviar!")
 
         LOGGER.debug(f"[AnitsuClient] GET {endpoint} com params: {params}")
 
@@ -170,7 +181,8 @@ class AnitsuClient:
                         txt = resp.text
                     except Exception:
                         txt = "<no response body>"
-                    LOGGER.warning(f"[AnitsuClient] Sessão expirada (401). Response: {txt}")
+                    LOGGER.error(f"[AnitsuClient] ❌ Sessão expirada (401). Response: {txt}")
+                    LOGGER.error(f"[AnitsuClient] Cookies enviados no header: {bool(getattr(self, '_cookie_header', None))}")
                     return {
                         "error": "session_expired",
                         "detail": "Sessão expirada. Exporte novos cookies e use /anitsurefresh.",
