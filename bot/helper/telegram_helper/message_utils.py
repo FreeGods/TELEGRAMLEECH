@@ -14,6 +14,7 @@ from pyrogram.errors import (
     MediaEmpty,
     MediaCaptionTooLong,
     EntityBoundsInvalid,
+    MessageIdInvalid,
 )
 
 try:
@@ -115,6 +116,9 @@ async def edit_message(message, text, buttons=None, block=True):
     except ReplyMarkupInvalid as rmi:
         LOGGER.warning(str(rmi))
         return await edit_message(message, text, None)
+    except MessageIdInvalid as mid:
+        LOGGER.warning(str(mid))
+        return str(mid)
     except FloodWait as f:
         LOGGER.warning(str(f))
         if not block:
