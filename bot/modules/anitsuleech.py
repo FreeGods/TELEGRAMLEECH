@@ -826,6 +826,95 @@ async def _handle_search(client, message, user_id: int, state: dict):
 
 
 # ─────────────────────────────────────────────
+# Comando de Diagnóstico
+# ─────────────────────────────────────────────
+
+@new_task
+async def anitsucheck(client, message):
+    """Diagnostic command to check Anitsu client and cookies."""
+    from .. import user_data
+    import os
+    import http.cookiejar
+    
+    user = message.from_user
+    if not user:
+        return
+    user_id = user.id
+    
+    try:
+        report = []
+        report.append("📋 **Diagnóstico Anitsu**\n")
+        
+        # 1. Verificar se o cliente está disponível
+        if not get_anitsu_client:
+            report.append("❌ Cliente Anitsu não está disponível (não foi importado corretamente)")
+            await send_message(message, "\n".join(report))
+            return
+        
+        report.append("✅ Cliente Anitsu importado")
+        
+        # 2. Procurar arquivo de cookie
+        user_cookie_file = None
+        if user_id in user_data and "USER_COOKIE_FILE" in user_data[user_id]:
+            user_cookie_file = user_data[user_id].get("USER_COOKIE_FILE")
+            report.append(f"✅ Cookie do usuário encontrado: `{user_cookie_file}`")
+        else:
+            report.append("⚠️  Nenhum cookie específico do usuário. Será usado o padrão.")
+        
+        # 3. Verificar arquivo de cookies
+        from ..core.config_manager import Config
+        cookie_file_to_check = user_cookie_file or getattr(Config, 'ANITSU_COOKIE_FILE', None) or "anitsu_cookies.txt"
+        
+        if os.path.exists(cookie_file_to_check):
+            file_size = os.path.getsize(cookie_file_to_check)
+            report.append(f"✅ Arquivo de cookies existe: `{cookie_file_to_check}` ({file_size} bytes)")
+            
+            # 4. Contar cookies no arquivo
+            try:
+                jar = http.cookiejar.MozillaCookieJar(cookie_file_to_check)
+                jar.load(ignore_discard=True, ignore_expires=True)
+                cookie_count = len(jar)
+                
+                if cookie_count > 0:
+                    report.append(f"✅ {cookie_count} cookies encontrados no arquivo:")
+                    for cookie in jar:
+                        report.append(f"   - `{cookie.name}` (domínio: {cookie.domain})")
+                else:
+                    report.append("❌ **PROBLEMA**: Arquivo de cookies está VAZIO!")
+                    report.append("📝 Solução: Exporte novos cookies do navegador e envie via `/botset private` ou `/bssetings`")
+            except Exception as e:
+                report.append(f"❌ Erro ao ler cookies: {str(e)}")
+        else:
+            report.append(f"❌ **Arquivo não encontrado**: `{cookie_file_to_check}`")
+            report.append("📝 Solução: Exporte cookies e envie via `/botset private` ou `/bssetings`")
+        
+        # 5. Tentar inicializar cliente
+        try:
+            ac = get_anitsu_client(cookie_file=user_cookie_file) if user_cookie_file else get_anitsu_client()
+            report.append("✅ Cliente Anitsu inicializado com sucesso")
+            
+            # 6. Verificar se o cliente tem cookies
+            if hasattr(ac, '_cookie_header'):
+                header_preview = ac._cookie_header[:50] + "..." if len(ac._cookie_header) > 50 else ac._cookie_header
+                if ac._cookie_header:
+                    report.append(f"✅ Cookie header construído: `{header_preview}`")
+                else:
+                    report.append("❌ Cookie header vazio (nenhum cookie foi carregado)")
+        except Exception as e:
+            report.append(f"❌ Erro ao inicializar cliente: {str(e)}")
+        
+        msg_text = "\n".join(report)
+        await send_message(message, msg_text)
+        
+    except Exception as e:
+        LOGGER.exception(f"[Anitsu] Erro em anitsucheck: {e}")
+        await send_message(
+            message,
+            f"❌ Erro ao diagnosticar:\n\n<code>{str(e)}</code>"
+        )
+
+
+# ─────────────────────────────────────────────
 # Comando de Refresh de Cookies
 # ─────────────────────────────────────────────
 

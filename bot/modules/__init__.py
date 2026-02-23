@@ -47,6 +47,8 @@ from .anitsuleech import (
     anitsuleech,
     anitsu_callback,
     anitsu_message_handler,
+    anitsurefresh,
+    anitsucheck,
 )
 
 __all__ = [
@@ -119,4 +121,6 @@ __all__ = [
     "anitsuleech",
     "anitsu_callback",
     "anitsu_message_handler",
+    "anitsurefresh",
+    "anitsucheck",
 ]
