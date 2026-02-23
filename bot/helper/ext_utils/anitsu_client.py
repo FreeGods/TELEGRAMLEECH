@@ -153,32 +153,49 @@ class AnitsuClient:
             if self._token_manager.project_id and not self._token_manager.access_token:
                 LOGGER.info(f"[AnitsuClient] Nenhum token extraído dos cookies, tentando MongoDB...")
                 import asyncio
+
+                async def _fetch_and_restore():
+                    saved = None
+                    try:
+                        if self.user_id and self.db_handler:
+                            saved = await self.db_handler.get_anitsu_tokens(self.user_id)
+                            if saved:
+                                LOGGER.info(f"[AnitsuClient] ✅ Carregados tokens salvos do MongoDB para usuário {self.user_id}")
+                        elif self.db_handler:
+                            saved = await self.db_handler.get_global_anitsu_tokens()
+                            if saved:
+                                LOGGER.info(f"[AnitsuClient] ✅ Carregados tokens globais salvos do MongoDB")
+
+                        if saved:
+                            if self._token_manager.from_dict(saved):
+                                LOGGER.info(f"[AnitsuClient] ✅ Tokens restaurados com sucesso do MongoDB")
+                            else:
+                                LOGGER.warning(f"[AnitsuClient] ⚠️ Falha ao restaurar tokens do MongoDB")
+                    except Exception as e:
+                        LOGGER.warning(f"[AnitsuClient] Falha ao buscar tokens do MongoDB: {e}")
+
                 try:
-                    # Fazer chamada síncrona assíncrona de forma segura
                     loop = asyncio.get_event_loop()
                 except RuntimeError:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                
-                saved_tokens = None
-                if self.user_id and self.db_handler:
-                    saved_tokens = loop.run_until_complete(
-                        self.db_handler.get_anitsu_tokens(self.user_id)
-                    )
-                    if saved_tokens:
-                        LOGGER.info(f"[AnitsuClient] ✅ Carregados tokens salvos do MongoDB para usuário {self.user_id}")
-                elif self.db_handler:
-                    saved_tokens = loop.run_until_complete(
-                        self.db_handler.get_global_anitsu_tokens()
-                    )
-                    if saved_tokens:
-                        LOGGER.info(f"[AnitsuClient] ✅ Carregados tokens globais salvos do MongoDB")
-                
-                if saved_tokens:
-                    if self._token_manager.from_dict(saved_tokens):
-                        LOGGER.info(f"[AnitsuClient] ✅ Tokens restaurados com sucesso do MongoDB")
-                    else:
-                        LOGGER.warning(f"[AnitsuClient] ⚠️ Falha ao restaurar tokens do MongoDB")
+
+                # Se o loop já estiver em execução (por exemplo under uvloop/uvicorn), não bloqueamos.
+                if loop.is_running():
+                    try:
+                        loop.create_task(_fetch_and_restore())
+                        LOGGER.info(f"[AnitsuClient] Agendado carregamento assíncrono de tokens do MongoDB")
+                    except Exception as e:
+                        LOGGER.warning(f"[AnitsuClient] Não foi possível agendar carregamento assíncrono: {e}")
+                else:
+                    # Podemos bloquear e aguardar quando o loop não estiver em execução
+                    try:
+                        saved_tokens = loop.run_until_complete(
+                            _fetch_and_restore()
+                        )
+                    except Exception:
+                        # run_until_complete não retorna explicitamente saved value; logic handled in coroutine
+                        pass
             
             if self._token_manager.access_token:
                 LOGGER.info(f"[AnitsuClient] ✅ Token manager inicializado com sucesso")
