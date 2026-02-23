@@ -231,5 +231,69 @@ class DbManager:
             return
         await self.db[name][TgClient.ID].drop()
 
+    async def save_anitsu_tokens(self, user_id, tokens_data):
+        """
+        Save renewed Anitsu/Supabase tokens for a user.
+        
+        Args:
+            user_id: Telegram user ID
+            tokens_data: Dictionary with access_token, refresh_token, expires_at, project_id
+        """
+        if self._return:
+            return
+        await self.db.users[TgClient.ID].update_one(
+            {"_id": user_id},
+            {"$set": {"ANITSU_TOKENS": tokens_data}},
+            upsert=True
+        )
+        LOGGER.info(f"[DbHandler] Tokens Anitsu salvos para usuário {user_id}")
+
+    async def get_anitsu_tokens(self, user_id):
+        """
+        Get saved Anitsu/Supabase tokens for a user.
+        
+        Args:
+            user_id: Telegram user ID
+            
+        Returns:
+            Dictionary with tokens or None if not found
+        """
+        if self._return:
+            return None
+        user_doc = await self.db.users[TgClient.ID].find_one({"_id": user_id})
+        if user_doc:
+            return user_doc.get("ANITSU_TOKENS")
+        return None
+
+    async def save_global_anitsu_tokens(self, tokens_data):
+        """
+        Save default Anitsu/Supabase tokens (when not user-specific).
+        
+        Args:
+            tokens_data: Dictionary with access_token, refresh_token, expires_at, project_id
+        """
+        if self._return:
+            return
+        await self.db.settings.anitsu.update_one(
+            {"_id": TgClient.ID},
+            {"$set": {"TOKENS": tokens_data}},
+            upsert=True
+        )
+        LOGGER.info("[DbHandler] Tokens globais Anitsu salvos")
+
+    async def get_global_anitsu_tokens(self):
+        """
+        Get saved default Anitsu/Supabase tokens.
+        
+        Returns:
+            Dictionary with tokens or None if not found
+        """
+        if self._return:
+            return None
+        settings = await self.db.settings.anitsu.find_one({"_id": TgClient.ID})
+        if settings:
+            return settings.get("TOKENS")
+        return None
+
 
 database = DbManager()

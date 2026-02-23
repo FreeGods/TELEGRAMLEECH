@@ -42,12 +42,14 @@ class SupabaseTokenManager:
     # Pattern to find Supabase auth cookies
     SUPABASE_COOKIE_PATTERN = r"sb-([a-z0-9]+)-auth-token"
     
-    def __init__(self, cookie_jar=None):
+    def __init__(self, cookie_jar=None, db_handler=None, user_id=None):
         """
         Initialize token manager.
         
         Args:
             cookie_jar: http.cookiejar.MozillaCookieJar instance with loaded cookies
+            db_handler: Optional DbManager instance for persisting renewed tokens
+            user_id: Optional Telegram user ID for user-specific token persistence
         """
         self.cookie_jar = cookie_jar
         self.project_id: Optional[str] = None
@@ -55,6 +57,8 @@ class SupabaseTokenManager:
         self.refresh_token: Optional[str] = None
         self.expires_at: Optional[float] = None
         self.backend: Optional[str] = None
+        self.db_handler = db_handler
+        self.user_id = user_id
         
         if cookie_jar:
             self._extract_tokens_from_cookies()
@@ -187,6 +191,8 @@ class SupabaseTokenManager:
         Makes a POST request to Supabase auth endpoint to get a new access token.
         Supabase invalidates the old refresh token and issues a new one.
         
+        After successful refresh, saves tokens to MongoDB if db_handler is available.
+        
         Returns:
             True if refresh was successful, False otherwise
         """
@@ -252,6 +258,21 @@ class SupabaseTokenManager:
                 f"    Novo Refresh Token: {self.refresh_token[:10]}...\n"
                 f"    Válido por: {expires_in} segundos"
             )
+            
+            # ✅ NOVA: Salvar tokens renovados no MongoDB
+            if self.db_handler:
+                tokens_data = self.to_dict()
+                try:
+                    if self.user_id:
+                        # Salvar tokens específicos do usuário
+                        await self.db_handler.save_anitsu_tokens(self.user_id, tokens_data)
+                    else:
+                        # Salvar tokens globais padrão
+                        await self.db_handler.save_global_anitsu_tokens(tokens_data)
+                    LOGGER.info("[SupabaseTokenManager] ✅ Tokens renovados salvos no MongoDB")
+                except Exception as e:
+                    LOGGER.warning(f"[SupabaseTokenManager] ⚠️ Não foi possível salvar tokens no MongoDB: {e}")
+                    # Não falha a renovação se MongoDB estiver indisponível
             
             return True
         
