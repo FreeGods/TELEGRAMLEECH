@@ -29,12 +29,14 @@ from .supabase_token_manager import SupabaseTokenManager
 class AnitsuClient:
     """Async client for Anitsu Cloud API."""
 
-    def __init__(self, cookie_file: Optional[str] = None):
+    def __init__(self, cookie_file: Optional[str] = None, db_handler=None, user_id=None):
         """
         Initialize Anitsu client with cookies.
         
         Args:
             cookie_file: Path to cookie file. If None, tries default locations.
+            db_handler: Optional DbManager instance for token persistence
+            user_id: Optional Telegram user ID for user-specific tokens
         
         Raises:
             FileNotFoundError: If no valid cookie file is found.
@@ -44,6 +46,8 @@ class AnitsuClient:
         self.backend = "https://nuvem.anitsu.moe"
         self._cookies: Optional[httpx.Cookies] = None
         self._token_manager: Optional[SupabaseTokenManager] = None
+        self.db_handler = db_handler
+        self.user_id = user_id
         
         # Determine which cookie file to use
         self.cookie_file = self._find_cookie_file(cookie_file)
@@ -143,7 +147,39 @@ class AnitsuClient:
             
             # Initialize Supabase token manager
             LOGGER.debug(f"[AnitsuClient] Inicializando gerenciador de tokens Supabase...")
-            self._token_manager = SupabaseTokenManager(jar)
+            self._token_manager = SupabaseTokenManager(jar, self.db_handler, self.user_id)
+            
+            # ✅ NOVA: Tentar carregar tokens salvos do MongoDB
+            if self._token_manager.project_id and not self._token_manager.access_token:
+                LOGGER.info(f"[AnitsuClient] Nenhum token extraído dos cookies, tentando MongoDB...")
+                import asyncio
+                try:
+                    # Fazer chamada síncrona assíncrona de forma segura
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                saved_tokens = None
+                if self.user_id and self.db_handler:
+                    saved_tokens = loop.run_until_complete(
+                        self.db_handler.get_anitsu_tokens(self.user_id)
+                    )
+                    if saved_tokens:
+                        LOGGER.info(f"[AnitsuClient] ✅ Carregados tokens salvos do MongoDB para usuário {self.user_id}")
+                elif self.db_handler:
+                    saved_tokens = loop.run_until_complete(
+                        self.db_handler.get_global_anitsu_tokens()
+                    )
+                    if saved_tokens:
+                        LOGGER.info(f"[AnitsuClient] ✅ Carregados tokens globais salvos do MongoDB")
+                
+                if saved_tokens:
+                    if self._token_manager.from_dict(saved_tokens):
+                        LOGGER.info(f"[AnitsuClient] ✅ Tokens restaurados com sucesso do MongoDB")
+                    else:
+                        LOGGER.warning(f"[AnitsuClient] ⚠️ Falha ao restaurar tokens do MongoDB")
+            
             if self._token_manager.access_token:
                 LOGGER.info(f"[AnitsuClient] ✅ Token manager inicializado com sucesso")
             else:
@@ -367,12 +403,14 @@ _client: Optional[AnitsuClient] = None
 _client_lock = None  # Will be set to asyncio.Lock if needed
 
 
-def get_anitsu_client(cookie_file: Optional[str] = None) -> AnitsuClient:
+def get_anitsu_client(cookie_file: Optional[str] = None, db_handler=None, user_id=None) -> AnitsuClient:
     """
     Get or create the Anitsu client instance.
     
     Args:
         cookie_file: Optional path to cookie file. If provided, creates/returns client with that file.
+        db_handler: Optional DbManager instance for token persistence
+        user_id: Optional Telegram user ID for user-specific tokens
         
     Returns:
         AnitsuClient instance
@@ -387,7 +425,7 @@ def get_anitsu_client(cookie_file: Optional[str] = None) -> AnitsuClient:
     if cookie_file:
         try:
             LOGGER.debug(f"[AnitsuClient] Criando novo cliente com cookies de: {cookie_file}")
-            return AnitsuClient(cookie_file)
+            return AnitsuClient(cookie_file, db_handler, user_id)
         except Exception as e:
             LOGGER.error(f"[AnitsuClient] Erro ao criar cliente com arquivo {cookie_file}: {e}")
             raise
@@ -396,7 +434,7 @@ def get_anitsu_client(cookie_file: Optional[str] = None) -> AnitsuClient:
     if _client is None:
         try:
             LOGGER.info(f"[AnitsuClient] Inicializando cliente Anitsu singleton")
-            _client = AnitsuClient()
+            _client = AnitsuClient(None, db_handler, user_id)
             LOGGER.info(f"[AnitsuClient] Cliente inicializado com sucesso de: {_client.cookie_file}")
         except FileNotFoundError as e:
             LOGGER.error(f"[AnitsuClient] Arquivo de cookies não encontrado: {e}")
@@ -408,24 +446,26 @@ def get_anitsu_client(cookie_file: Optional[str] = None) -> AnitsuClient:
     return _client
 
 
-def refresh_anitsu_client(cookie_file: Optional[str] = None):
+def refresh_anitsu_client(cookie_file: Optional[str] = None, db_handler=None, user_id=None):
     """
     Force reload of Anitsu client cookies.
     
     Args:
         cookie_file: Optional new cookie file path
+        db_handler: Optional DbManager instance for token persistence
+        user_id: Optional Telegram user ID for user-specific tokens
     """
     global _client
     try:
         if cookie_file:
             LOGGER.info(f"[AnitsuClient] Recarregando cookies de novo arquivo: {cookie_file}")
-            _client = AnitsuClient(cookie_file)
+            _client = AnitsuClient(cookie_file, db_handler, user_id)
         elif _client:
             LOGGER.info(f"[AnitsuClient] Recarregando cookies do arquivo atual: {_client.cookie_file}")
             _client.refresh_cookies()
         else:
             LOGGER.warning(f"[AnitsuClient] Tentativa de recarregar cookies, mas cliente não foi inicializado")
-            _client = AnitsuClient()
+            _client = AnitsuClient(None, db_handler, user_id)
         LOGGER.info(f"[AnitsuClient] Cookies recarregados com sucesso")
     except Exception as e:
         LOGGER.exception(f"[AnitsuClient] Erro ao recarregar cookies: {e}")

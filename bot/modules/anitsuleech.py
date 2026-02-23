@@ -90,6 +90,7 @@ async def _get_anitsu_client_for_user(user_id: int):
         Exception: If client cannot be initialized
     """
     from .. import user_data
+    from ..helper.ext_utils.db_handler import database
     
     user_cookie_file = None
     if user_id in user_data and "USER_COOKIE_FILE" in user_data[user_id]:
@@ -98,9 +99,9 @@ async def _get_anitsu_client_for_user(user_id: int):
     
     try:
         if user_cookie_file:
-            return get_anitsu_client(cookie_file=user_cookie_file)
+            return get_anitsu_client(cookie_file=user_cookie_file, db_handler=database, user_id=user_id)
         else:
-            return get_anitsu_client()
+            return get_anitsu_client(db_handler=database, user_id=user_id)
     except Exception as e:
         LOGGER.error(f"[Anitsu] Erro ao obter cliente para usuário {user_id}: {e}")
         raise
@@ -269,6 +270,7 @@ def _file_actions_menu(user_id: int, filepaths: list[str], sizes: list[int]) -> 
 async def anitsuleech(client, message):
     """Ponto de entrada: /anitsuleech"""
     from .. import user_data
+    from ..helper.ext_utils.db_handler import database
     
     # Verifica se o cliente está disponível
     if not get_anitsu_client:
@@ -291,7 +293,7 @@ async def anitsuleech(client, message):
     # Tenta instanciar o cliente
     try:
         LOGGER.info(f"[Anitsu] Inicializando cliente Anitsu para usuário {user_id}")
-        ac = get_anitsu_client(cookie_file=user_cookie_file) if user_cookie_file else get_anitsu_client()
+        ac = get_anitsu_client(cookie_file=user_cookie_file, db_handler=database, user_id=user_id) if user_cookie_file else get_anitsu_client(db_handler=database, user_id=user_id)
         LOGGER.info(f"[Anitsu] Cliente inicializado com sucesso de: {ac.cookie_file}")
     except FileNotFoundError as e:
         LOGGER.error(f"[Anitsu] Arquivo de cookies não encontrado: {e}")
@@ -833,6 +835,7 @@ async def _handle_search(client, message, user_id: int, state: dict):
 async def anitsucheck(client, message):
     """Diagnostic command to check Anitsu client and cookies."""
     from .. import user_data
+    from ..helper.ext_utils.db_handler import database
     import os
     import http.cookiejar
     
@@ -890,7 +893,7 @@ async def anitsucheck(client, message):
         
         # 5. Tentar inicializar cliente
         try:
-            ac = get_anitsu_client(cookie_file=user_cookie_file) if user_cookie_file else get_anitsu_client()
+            ac = get_anitsu_client(cookie_file=user_cookie_file, db_handler=database, user_id=user_id) if user_cookie_file else get_anitsu_client(db_handler=database, user_id=user_id)
             report.append("✅ Cliente Anitsu inicializado com sucesso")
             
             # 6. Verificar se o cliente tem cookies
@@ -922,6 +925,7 @@ async def anitsucheck(client, message):
 async def anitsurefresh(client, message):
     """Recarrega cookies do Anitsu."""
     from .. import user_data
+    from ..helper.ext_utils.db_handler import database
     
     user = message.from_user
     if not user:
@@ -937,7 +941,7 @@ async def anitsurefresh(client, message):
         # Recarrega cookies
         if get_anitsu_client:
             LOGGER.info(f"[Anitsu] Recarregando cookies para usuário {user_id}")
-            refresh_anitsu_client(cookie_file=user_cookie_file)
+            refresh_anitsu_client(cookie_file=user_cookie_file, db_handler=database, user_id=user_id)
             await send_message(message, "✅ Cookies do Anitsu recarregados com sucesso!")
         else:
             await send_message(message, "❌ Anitsu client não disponível")
