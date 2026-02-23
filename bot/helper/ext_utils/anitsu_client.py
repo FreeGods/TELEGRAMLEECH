@@ -16,12 +16,14 @@ Configuration:
 
 import os
 import http.cookiejar
+import json
 from typing import Dict, List, Optional
 
 import httpx
 
 from ...core.config_manager import Config
 from ... import LOGGER
+from .supabase_token_manager import SupabaseTokenManager
 
 
 class AnitsuClient:
@@ -41,6 +43,7 @@ class AnitsuClient:
         self.cookie_file = None
         self.backend = "https://nuvem.anitsu.moe"
         self._cookies: Optional[httpx.Cookies] = None
+        self._token_manager: Optional[SupabaseTokenManager] = None
         
         # Determine which cookie file to use
         self.cookie_file = self._find_cookie_file(cookie_file)
@@ -95,7 +98,7 @@ class AnitsuClient:
 
     
     def _load_cookies(self):
-        """Load cookies from Netscape-format file."""
+        """Load cookies from Netscape-format file and initialize Supabase token manager."""
         if not self.cookie_file or not os.path.exists(self.cookie_file):
             error_msg = (
                 f"Anitsu cookie file not found: {self.cookie_file}\n"
@@ -137,6 +140,14 @@ class AnitsuClient:
             if len(jar) == 0:
                 LOGGER.error(f"[AnitsuClient] ❌ CRITICAL: Arquivo de cookies está vazio ou inválido!")
                 LOGGER.info(f"[AnitsuClient] Verifique se o arquivo foi exportado corretamente")
+            
+            # Initialize Supabase token manager
+            LOGGER.debug(f"[AnitsuClient] Inicializando gerenciador de tokens Supabase...")
+            self._token_manager = SupabaseTokenManager(jar)
+            if self._token_manager.access_token:
+                LOGGER.info(f"[AnitsuClient] ✅ Token manager inicializado com sucesso")
+            else:
+                LOGGER.warning(f"[AnitsuClient] ⚠️ Token manager inicializado, mas tokens não foram extraídos")
         
         except Exception as e:
             LOGGER.error(f"[AnitsuClient] Erro ao carregar cookies: {e}")
@@ -147,12 +158,27 @@ class AnitsuClient:
         self._load_cookies()
 
     async def _get(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
-        """Internal GET request handler."""
+        """Internal GET request handler with automatic token refresh."""
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": f"{self.backend}/",
             "Accept": "application/json",
         }
+
+        # Ensure token is valid before making request
+        if self._token_manager:
+            try:
+                token_valid = await self._token_manager.ensure_valid_token()
+                if token_valid:
+                    # Use Authorization header if token is available
+                    auth_header = self._token_manager.get_authorization_header()
+                    if auth_header:
+                        headers["Authorization"] = auth_header
+                        LOGGER.debug(f"[AnitsuClient] Usando Authorization header com token Supabase")
+                else:
+                    LOGGER.warning(f"[AnitsuClient] ⚠️ Falha ao renovar token Supabase, tentando com cookies...")
+            except Exception as e:
+                LOGGER.warning(f"[AnitsuClient] Erro ao verificar token: {e}, continuando com cookies...")
 
         # If we built a Cookie header from the cookie file, include it to ensure
         # cookies are sent even when domain/path attributes would prevent it.
@@ -289,6 +315,48 @@ class AnitsuClient:
             "size": 0,  # placeholder — actual size fetched on download
             "filename": os.path.basename(path),
             "ok": True,
+        }
+    
+    def get_token_status(self) -> Dict:
+        """
+        Get current authentication token status.
+        
+        Returns:
+            {
+                "has_tokens": bool,
+                "token_valid": bool,
+                "access_token": str (first 20 chars or "N/A"),
+                "refresh_token": str (first 10 chars or "N/A"),
+                "project_id": str or None,
+                "expires_at": float or None,
+                "expires_in_hours": float or None,
+            }
+        """
+        if not self._token_manager:
+            return {
+                "has_tokens": False,
+                "token_valid": False,
+                "access_token": "N/A",
+                "refresh_token": "N/A",
+                "project_id": None,
+                "expires_at": None,
+                "expires_in_hours": None,
+            }
+        
+        from time import time
+        
+        expires_in = None
+        if self._token_manager.expires_at:
+            expires_in = (self._token_manager.expires_at - time()) / 3600
+        
+        return {
+            "has_tokens": bool(self._token_manager.access_token),
+            "token_valid": self._token_manager.is_token_valid(),
+            "access_token": self._token_manager.access_token[:20] + "..." if self._token_manager.access_token else "N/A",
+            "refresh_token": self._token_manager.refresh_token[:10] + "..." if self._token_manager.refresh_token else "N/A",
+            "project_id": self._token_manager.project_id,
+            "expires_at": self._token_manager.expires_at,
+            "expires_in_hours": expires_in,
         }
 
 
