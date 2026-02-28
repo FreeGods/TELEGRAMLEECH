@@ -3,6 +3,7 @@ from aiofiles import open as aiopen
 from base64 import b64encode
 from aiohttp.client_exceptions import ClientError
 from asyncio import TimeoutError
+import re
 
 from .... import task_dict_lock, task_dict, LOGGER
 from ....core.config_manager import Config
@@ -24,6 +25,30 @@ async def add_aria2_download(listener, dpath, header, ratio, seed_time):
         a2c_opt["out"] = listener.name
     if header:
         a2c_opt["header"] = header
+
+    # Suporta sintaxe inline: <url>||Header: value
+    # Ex.: https://...||Cookie:abc=123
+    # Se encontrado, extrai header embutido e mescla com `header` passado por parâmetro
+    try:
+        if isinstance(listener.link, str) and "||" in listener.link:
+            link_part, inline = listener.link.split("||", 1)
+            inline = inline.strip("|")
+            listener.link = link_part
+            inline_headers = [h.strip() for h in re.split(r"\||\n", inline) if h.strip()]
+            if inline_headers:
+                if header:
+                    if isinstance(header, str):
+                        existing = [h.strip() for h in re.split(r"\||\n", header) if h.strip()]
+                    elif isinstance(header, (list, tuple)):
+                        existing = list(header)
+                    else:
+                        existing = [str(header)]
+                    a2c_opt["header"] = existing + inline_headers
+                else:
+                    a2c_opt["header"] = inline_headers
+    except Exception:
+        # Não falhar por causa de header inline mal formatado; logging já feito mais abaixo
+        pass
     if ratio:
         a2c_opt["seed-ratio"] = ratio
     if seed_time:
