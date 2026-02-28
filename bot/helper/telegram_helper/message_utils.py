@@ -43,15 +43,30 @@ async def send_message(message, text, buttons=None, block=True, photo=None, **kw
                         disable_notification=True,
                         **kwargs,
                     )
-                return await message.reply_photo(
-                    photo=photo,
-                    reply_to_message_id=message.id,
-                    caption=text,
-                    quote=True,
-                    reply_markup=buttons,
-                    disable_notification=True,
-                    **kwargs,
-                )
+                try:
+                    return await message.reply_photo(
+                        photo=photo,
+                        reply_to_message_id=message.id,
+                        caption=text,
+                        quote=True,
+                        reply_markup=buttons,
+                        disable_notification=True,
+                        **kwargs,
+                    )
+                except AttributeError as attr_err:
+                    if "_client" in str(attr_err):
+                        # Fallback quando message._client não está disponível
+                        LOGGER.debug(f"Message._client não disponível em reply_photo, usando TgClient.bot: {attr_err}")
+                        return await TgClient.bot.send_photo(
+                            chat_id=message.chat.id,
+                            photo=photo,
+                            caption=text,
+                            reply_markup=buttons,
+                            disable_notification=True,
+                            **kwargs,
+                        )
+                    else:
+                        raise
             except FloodWait as f:
                 LOGGER.warning(str(f))
                 if not block:
@@ -80,14 +95,31 @@ async def send_message(message, text, buttons=None, block=True, photo=None, **kw
                 disable_notification=True,
                 reply_markup=buttons,
             )
-        return await message.reply(
-            text=text,
-            quote=True,
-            disable_web_page_preview=True,
-            disable_notification=True,
-            reply_markup=buttons,
-            **kwargs,
-        )
+        
+        # Tenta usar message.reply() primeiro
+        # Se falhar por falta de _client, fallback para TgClient.bot
+        try:
+            return await message.reply(
+                text=text,
+                quote=True,
+                disable_web_page_preview=True,
+                disable_notification=True,
+                reply_markup=buttons,
+                **kwargs,
+            )
+        except AttributeError as attr_err:
+            if "_client" in str(attr_err):
+                # Fallback quando message._client não está disponível
+                LOGGER.debug(f"Message._client não disponível, usando TgClient.bot: {attr_err}")
+                return await TgClient.bot.send_message(
+                    chat_id=message.chat.id,
+                    text=text,
+                    disable_web_page_preview=True,
+                    disable_notification=True,
+                    reply_markup=buttons,
+                )
+            else:
+                raise
     except FloodWait as f:
         LOGGER.warning(str(f))
         if not block:
@@ -111,6 +143,19 @@ async def edit_message(message, text, buttons=None, block=True):
             disable_web_page_preview=True,
             reply_markup=buttons,
         )
+    except AttributeError as attr_err:
+        if "_client" in str(attr_err):
+            # Fallback quando message._client não está disponível
+            LOGGER.debug(f"Message._client não disponível em edit, usando TgClient.bot: {attr_err}")
+            return await TgClient.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.id,
+                text=text,
+                disable_web_page_preview=True,
+                reply_markup=buttons,
+            )
+        else:
+            raise
     except (MessageNotModified, MessageEmpty):
         pass
     except ReplyMarkupInvalid as rmi:
@@ -133,6 +178,17 @@ async def edit_message(message, text, buttons=None, block=True):
 async def edit_reply_markup(message, buttons):
     try:
         return await message.edit_reply_markup(reply_markup=buttons)
+    except AttributeError as attr_err:
+        if "_client" in str(attr_err):
+            # Fallback quando message._client não está disponível
+            LOGGER.debug(f"Message._client não disponível em edit_reply_markup, usando TgClient.bot: {attr_err}")
+            return await TgClient.bot.edit_message_reply_markup(
+                chat_id=message.chat.id,
+                message_id=message.id,
+                reply_markup=buttons,
+            )
+        else:
+            raise
     except MessageNotModified:
         pass
     except FloodWait as f:
@@ -153,6 +209,19 @@ async def send_file(message, file, caption="", buttons=None):
             disable_notification=True,
             reply_markup=buttons,
         )
+    except AttributeError as attr_err:
+        if "_client" in str(attr_err):
+            # Fallback quando message._client não está disponível
+            LOGGER.debug(f"Message._client não disponível em send_file, usando TgClient.bot: {attr_err}")
+            return await TgClient.bot.send_document(
+                chat_id=message.chat.id,
+                document=file,
+                caption=caption,
+                disable_notification=True,
+                reply_markup=buttons,
+            )
+        else:
+            raise
     except FloodWait as f:
         LOGGER.warning(str(f))
         await sleep(f.value * 1.2)
@@ -182,13 +251,31 @@ async def send_rss(text, chat_id, thread_id):
 
 
 async def delete_message(*args):
-    tasks = [msg.delete() for msg in args if isinstance(msg, Message)]
+    async def delete_single_message(msg):
+        if not isinstance(msg, Message):
+            return
+        try:
+            await msg.delete()
+        except AttributeError as attr_err:
+            if "_client" in str(attr_err):
+                # Fallback quando message._client não está disponível
+                LOGGER.debug(f"Message._client não disponível em delete, usando TgClient.bot: {attr_err}")
+                try:
+                    await TgClient.bot.delete_messages(
+                        chat_id=msg.chat.id,
+                        message_ids=msg.id,
+                    )
+                except Exception as e:
+                    LOGGER.error(f"Failed to delete message fallback: {e}")
+            else:
+                raise
+        except Exception as e:
+            LOGGER.error(str(e))
+    
+    tasks = [delete_single_message(msg) for msg in args]
     if not tasks:
         return
-    results = await gather(*tasks, return_exceptions=True)
-    for result in results:
-        if isinstance(result, Exception):
-            LOGGER.error(result)
+    await gather(*tasks, return_exceptions=True)
 
 
 async def delete_links(message):
