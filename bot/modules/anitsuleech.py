@@ -524,17 +524,51 @@ async def _navigate_folder(query, user_id: int, state: dict, path: str):
     state["folder_files"] = files  # Armazena lista de arquivos para seleção
     LOGGER.info(f"[Anitsu] Exibindo {len(files)} itens em {path}")
     txt, markup = _folder_menu(user_id, path, files, parent)
-    await edit_message(loading, txt, markup)
+    edited_msg = await edit_message(loading, txt, markup)
+    # Armazena o ID e referência da mensagem ativa para uso em _handle_file_selection
+    if edited_msg and hasattr(edited_msg, 'id'):
+        state["active_msg_id"] = edited_msg.id
+        state["active_msg_obj"] = edited_msg  # Armazena a referência da mensagem para reutilização
     state["stage"] = "file_selection"  # Aguardando entrada do usuário
-
 
 async def _handle_file_selection(query, user_id: int, state: dict, range_input: str):
     """Usuário selecionou um intervalo de arquivos."""
     files = state.get("folder_files", [])
     docs = [f for f in files if not f.get("is_directory")]
     
+    # Função auxiliar para editar mensagem com fallback seguro
+    async def edit_active_msg(text, markup=None):
+        # Tenta usar a referência da mensagem armazenada (mais confiável)
+        active_msg = state.get("active_msg_obj")
+        if active_msg:
+            try:
+                await edit_message(active_msg, text, markup)
+                return
+            except Exception as e:
+                LOGGER.warning(f"[Anitsu] Falha ao editar msg armazenada: {e}")
+        
+        # Fallback: tenta recuperar a mensagem pelo ID
+        msg_id = state.get("active_msg_id")
+        if msg_id and query.message and hasattr(query.message, '_client'):
+            try:
+                client = query.message._client
+                chat_id = query.message.chat.id
+                fetched_msg = await client.get_messages(chat_id, msg_id)
+                await edit_message(fetched_msg, text, markup)
+                return
+            except Exception as e:
+                LOGGER.warning(f"[Anitsu] Falha ao recuperar msg {msg_id}: {e}")
+        
+        # Último fallback: tenta editar a mensagem de entrada do usuário
+        try:
+            await edit_message(query.message, text, markup)
+        except Exception as e:
+            LOGGER.error(f"[Anitsu] Falha em ambos os métodos: {e}, enviando nova mensagem")
+            # Último recurso: envia uma nova mensagem
+            await send_message(query.message, text)
+    
     if not docs:
-        await edit_message(query.message, "❌ Nenhum arquivo na pasta.")
+        await edit_active_msg("❌ Nenhum arquivo na pasta.")
         return
     
     # Parse do intervalo
@@ -543,11 +577,11 @@ async def _handle_file_selection(query, user_id: int, state: dict, range_input: 
     else:
         start_idx, end_idx = parse_file_range(range_input)
         if start_idx is None or end_idx >= len(docs) or start_idx >= len(docs):
-            await edit_message(
-                query.message,
+            await edit_active_msg(
                 f"❌ Intervalo inválido. Tente 1-{len(docs)}, ou uma número único."
             )
             return
+    
     
     selected_files = docs[start_idx:end_idx + 1]
     path = state.get("current_path", "")
@@ -566,7 +600,7 @@ async def _handle_file_selection(query, user_id: int, state: dict, range_input: 
     state["stage"] = "file_action"
     
     txt, markup = _file_actions_menu(user_id, filepaths, sizes)
-    await edit_message(query.message, txt, markup)
+    await edit_active_msg(txt, markup)
 
 
 async def _handle_file_action(query, user_id: int, state: dict, action: str):
@@ -823,8 +857,15 @@ async def _handle_search(client, message, user_id: int, state: dict):
 
     LOGGER.info(f"[Anitsu] Encontrados {len(results)} resultados para '{query}'")
     txt, markup = _search_results_menu(user_id, results, 0)
-    await edit_message(loading, txt, markup)
-    state["active_msg_id"] = loading.id
+    edited_msg = await edit_message(loading, txt, markup)
+    # Armazena ID e referência da mensagem ativa
+    if edited_msg and hasattr(edited_msg, 'id'):
+        state["active_msg_id"] = edited_msg.id
+        state["active_msg_obj"] = edited_msg
+    else:
+        # Fallback: usa a mensagem original se a edição não retornar um objeto válido
+        state["active_msg_id"] = loading.id
+        state["active_msg_obj"] = loading
 
 
 # ─────────────────────────────────────────────
