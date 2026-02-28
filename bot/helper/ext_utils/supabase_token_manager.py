@@ -116,6 +116,21 @@ class SupabaseTokenManager:
         
         LOGGER.debug(f"[SupabaseTokenManager] Token reconstruído com {len(full_auth_token)} caracteres")
         
+        # Decode base64 prefix if present (Supabase encodes the JSON as base64)
+        import base64 as _b64
+
+        if full_auth_token.startswith("base64-"):
+            # strip prefix and add padding if needed
+            full_auth_token = full_auth_token[len("base64-"):]
+            padding = 4 - len(full_auth_token) % 4
+            if padding != 4:
+                full_auth_token += "=" * padding
+            try:
+                full_auth_token = _b64.b64decode(full_auth_token).decode("utf-8")
+            except Exception as e:
+                LOGGER.error(f"[SupabaseTokenManager] Erro ao decodificar base64: {e}")
+                return False
+
         # Parse as JSON
         try:
             auth_data = json.loads(full_auth_token)
