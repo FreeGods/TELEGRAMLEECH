@@ -645,36 +645,31 @@ async def _handle_file_action(query, user_id: int, state: dict, action: str):
             "(cookie ou token). As requisições podem falhar com Authorization failed"
         )
 
-    # Cria comando com todas as URLs
-    urls_text = " ".join(urls)
-    if action == "mirror":
-        fake_text = f"/mirror {urls_text}"
-    else:
-        fake_text = f"/leech {urls_text}"
-    
-    # Mostra resumo da ação
+    # Mostra resumo da ação para o usuário
     file_list = "\n".join([os.path.basename(f) for f in filepaths[:5]])
     if len(filepaths) > 5:
         file_list += f"\n... e mais {len(filepaths) - 5}"
-    
+
     await edit_message(
         query.message,
         f"🚀 <b>Iniciando {action.upper()}:</b>\n\n"
         f"📦 Arquivos:\n{file_list}\n\n"
         f"<i>Processando {len(filepaths)} arquivo(s)...</i>"
     )
-    
-    # Chama handlers nativos de mirror/leech
+
+    # Chama handlers nativos de mirror/leech individualmente para cada URL
     try:
         from ..modules.mirror_leech import mirror, leech
         message = query.message
-        message.text = fake_text
-        
-        LOGGER.debug(f"[Anitsu] Chamando handler de {action} com {len(urls)} URL(s)")
-        if action == "mirror":
-            await mirror(None, message)
-        else:
-            await leech(None, message)
+
+        LOGGER.debug(f"[Anitsu] Chamando handler de {action} para {len(urls)} URL(s)")
+        for url in urls:
+            command = f"/mirror {url}" if action == "mirror" else f"/leech {url}"
+            message.text = command
+            if action == "mirror":
+                await mirror(None, message)
+            else:
+                await leech(None, message)
     except Exception as e:
         LOGGER.exception(f"[Anitsu] Erro ao chamar handler de {action}: {e}")
         await edit_message(query.message, f"❌ Erro ao iniciar {action}: {str(e)[:100]}")
