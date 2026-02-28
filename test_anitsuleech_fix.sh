@@ -65,4 +65,59 @@ print('direct_link_generator passthrough:', result == link)
 PYCODE
 
 echo ""
+# simulate interval selection and ensure no duplicates (regression test)
+python3 - <<'PYCODE'
+import asyncio
+from types import SimpleNamespace
+
+# prepare fake anitsuleech environment
+import importlib
+anitsuleech = importlib.import_module('bot.modules.anitsuleech')
+
+# monkeypatch client getter to avoid real network
+class FakeClient:
+    def download_url(self, path):
+        return f"url://{path}"
+async def fake_get_client(uid):
+    return FakeClient()
+anitsuleech._get_anitsu_client_for_user = fake_get_client
+
+# capture calls to mirror/leech
+called = []
+async def fake_mirror(client, message):
+    called.append(message.text)
+async def fake_leech(client, message):
+    called.append(message.text)
+
+# replace original handlers
+from bot.modules import mirror_leech
+mirror_leech.mirror = fake_mirror
+mirror_leech.leech = fake_leech
+
+# build fake query and message
+class FakeQuery:
+    pass
+q = FakeQuery()
+msg = SimpleNamespace()
+msg.text = ""
+msg.chat = SimpleNamespace(id=123)
+msg.from_user = SimpleNamespace(id=456)
+msg.reply = lambda *a, **k: None
+msg._client = None
+msg.id = 789
+q.message = msg
+
+# prepare state as if 3 files were selected
+state = {"selected_files": ["a", "b", "c"], "selected_sizes": [1, 2, 3]}
+
+async def run_test():
+    # call action handler simulating mirror
+    await anitsuleech._handle_file_action(q, 999, state, "mirror")
+
+asyncio.run(run_test())
+print("called texts:", called)
+# should be three distinct urls
+print("test passed" if len(set(called)) == 3 else "test failed")
+PYCODE
+
 echo "✅ Tudo pronto para testes!"
