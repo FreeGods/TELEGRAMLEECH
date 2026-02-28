@@ -6,6 +6,7 @@ from asyncio import TimeoutError
 import re
 
 from .... import task_dict_lock, task_dict, LOGGER
+from asyncio import sleep
 from ....core.config_manager import Config
 from ....core.torrent_manager import TorrentManager, is_metadata, aria2_name
 from ...ext_utils.bot_utils import bt_selection_buttons
@@ -30,6 +31,11 @@ async def add_aria2_download(listener, dpath, header, ratio, seed_time):
     # Ex.: https://...||Cookie:abc=123
     # Se encontrado, extrai header embutido e mescla com `header` passado por parâmetro
     try:
+        # small delay to avoid hitting site protections when starting multiple requests
+        try:
+            await sleep(int(Config.DL_REQUEST_DELAY))
+        except Exception:
+            await sleep(1)
         if isinstance(listener.link, str) and "||" in listener.link:
             link_part, inline = listener.link.split("||", 1)
             inline = inline.strip("|")
