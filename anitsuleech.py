@@ -627,13 +627,23 @@ async def _handle_file_action(query, user_id: int, state: dict, action: str):
         await edit_message(query.message, f"❌ Erro ao gerar URLs: {str(e)[:100]}")
         return
 
-    # Inclui cookie de autenticação no header para o aria2 autenticar corretamente
+    # Inclui cookies e/ou token de autorização no header para o aria2 autenticar corretamente
+    headers_list: list[str] = []
     cookie_header = getattr(ac, '_cookie_header', '') or ''
     if cookie_header:
-        LOGGER.debug(f"[Anitsu] Adicionando cookie header às URLs")
-        urls_with_headers = [f"{url}||Cookie:{cookie_header}" for url in urls]
+        headers_list.append(f"Cookie:{cookie_header}")
+    if getattr(ac, '_token_manager', None):
+        auth_hdr = ac._token_manager.get_authorization_header()
+        if auth_hdr:
+            headers_list.append(f"Authorization:{auth_hdr}")
+    if headers_list:
+        LOGGER.debug(f"[Anitsu] Adicionando cabeçalhos às URLs: {headers_list}")
+        urls_with_headers = [f"{url}||{'|'.join(headers_list)}" for url in urls]
     else:
-        LOGGER.warning(f"[Anitsu] Nenhum cookie header encontrado — download pode falhar com Authorization failed")
+        LOGGER.warning(
+            "[Anitsu] Nenhum header de autenticação disponível "
+            "(cookie ou token). O download poderá falhar com Authorization failed"
+        )
         urls_with_headers = urls
 
     # Cria comando com todas as URLs
@@ -690,13 +700,23 @@ async def _handle_download_action(query, user_id: int, state: dict, action: str,
         await edit_message(query.message, f"❌ Erro: {str(e)[:100]}")
         return
 
-    # Inclui cookie de autenticação no header para o aria2 autenticar corretamente
+    # Inclui cookies e/ou token de autorização no header para o aria2 autenticar corretamente
+    headers_list: list[str] = []
     cookie_header = getattr(ac, '_cookie_header', '') or ''
     if cookie_header:
-        LOGGER.debug(f"[Anitsu] Adicionando cookie header à URL")
-        url_with_header = f"{url}||Cookie:{cookie_header}"
+        headers_list.append(f"Cookie:{cookie_header}")
+    if getattr(ac, '_token_manager', None):
+        auth_hdr = ac._token_manager.get_authorization_header()
+        if auth_hdr:
+            headers_list.append(f"Authorization:{auth_hdr}")
+    if headers_list:
+        LOGGER.debug(f"[Anitsu] Adicionando cabeçalhos à URL: {headers_list}")
+        url_with_header = f"{url}||{'|'.join(headers_list)}"
     else:
-        LOGGER.warning(f"[Anitsu] Nenhum cookie header encontrado — download pode falhar com Authorization failed")
+        LOGGER.warning(
+            "[Anitsu] Nenhum header de autenticação disponível "
+            "(cookie ou token). O download poderá falhar com Authorization failed"
+        )
         url_with_header = url
 
     fname = os.path.basename(fpath)
