@@ -137,7 +137,7 @@ class AnitsuClient:
                 except Exception as e:
                     LOGGER.debug(f"[AnitsuClient] Failed to process cookie {cookie.name}: {e}")
                     continue
-            self._cookie_header = "; ".join(cookie_pairs) if cookie_pairs else ""
+            self._cookie_header = ";".join(cookie_pairs) if cookie_pairs else ""
             LOGGER.info(f"[AnitsuClient] {len(jar)} cookies carregados do arquivo")
             LOGGER.info(f"[AnitsuClient] Cookie header: {self._cookie_header[:100]}..." if len(self._cookie_header) > 100 else f"[AnitsuClient] Cookie header: {self._cookie_header}")
             
