@@ -657,19 +657,37 @@ async def _handle_file_action(query, user_id: int, state: dict, action: str):
         f"<i>Processando {len(filepaths)} arquivo(s)...</i>"
     )
 
-    # Chama handlers nativos de mirror/leech individualmente para cada URL
+    # Chama handlers nativos de mirror/leech individualmente para cada URL.
+    # Cada chamada precisa de uma cópia independente da mensagem original, pois
+    # o handler de mirror/leech agenda um task que acessa `message.text` de forma
+    # assíncrona. Se reutilizarmos o mesmo objeto e alterarmos seu .text no loop,
+    # todas as tarefas acabarão vendo o último valor, resultando em downloads
+    # repetidos do mesmo arquivo (o bug relatado).
     try:
         from ..modules.mirror_leech import mirror, leech
-        message = query.message
+        original_message = query.message
 
         LOGGER.debug(f"[Anitsu] Chamando handler de {action} para {len(urls)} URL(s)")
         for url in urls:
             command = f"/mirror {url}" if action == "mirror" else f"/leech {url}"
-            message.text = command
+            # make a shallow copy so that each task captures its own message object
+            try:
+                import copy
+                msg_copy = copy.copy(original_message)
+            except Exception:
+                # fallback: build a minimal fake message if copy fails
+                from types import SimpleNamespace
+                msg_copy = SimpleNamespace()
+                # preserve attributes used by the handlers
+                for attr in ("chat", "from_user", "reply", "id", "_client"):
+                    if hasattr(original_message, attr):
+                        setattr(msg_copy, attr, getattr(original_message, attr))
+            msg_copy.text = command
+
             if action == "mirror":
-                await mirror(None, message)
+                await mirror(None, msg_copy)
             else:
-                await leech(None, message)
+                await leech(None, msg_copy)
     except Exception as e:
         LOGGER.exception(f"[Anitsu] Erro ao chamar handler de {action}: {e}")
         await edit_message(query.message, f"❌ Erro ao iniciar {action}: {str(e)[:100]}")
