@@ -626,7 +626,25 @@ async def _handle_file_action(query, user_id: int, state: dict, action: str):
         LOGGER.exception(f"[Anitsu] Erro ao gerar URLs: {e}")
         await edit_message(query.message, f"❌ Erro ao gerar URLs: {str(e)[:100]}")
         return
-    
+
+    # adiciona cabeçalhos necessários (cookies + token de autorização) a cada link
+    headers_list: list[str] = []
+    cookie_header = getattr(ac, '_cookie_header', '') or ''
+    if cookie_header:
+        headers_list.append(f"Cookie:{cookie_header}")
+    if getattr(ac, '_token_manager', None):
+        auth_hdr = ac._token_manager.get_authorization_header()
+        if auth_hdr:
+            headers_list.append(f"Authorization:{auth_hdr}")
+    if headers_list:
+        LOGGER.debug(f"[Anitsu] Adicionando cabeçalhos às URLs: {headers_list}")
+        urls = [f"{url}||{'|'.join(headers_list)}" for url in urls]
+    else:
+        LOGGER.warning(
+            "[Anitsu] Nenhum header de autenticação disponível "
+            "(cookie ou token). As requisições podem falhar com Authorization failed"
+        )
+
     # Cria comando com todas as URLs
     urls_text = " ".join(urls)
     if action == "mirror":
@@ -681,15 +699,34 @@ async def _handle_download_action(query, user_id: int, state: dict, action: str,
         await edit_message(query.message, f"❌ Erro: {str(e)[:100]}")
         return
 
+    # adiciona cabeçalhos de autenticação à URL individual
+    headers_list: list[str] = []
+    cookie_header = getattr(ac, '_cookie_header', '') or ''
+    if cookie_header:
+        headers_list.append(f"Cookie:{cookie_header}")
+    if getattr(ac, '_token_manager', None):
+        auth_hdr = ac._token_manager.get_authorization_header()
+        if auth_hdr:
+            headers_list.append(f"Authorization:{auth_hdr}")
+    if headers_list:
+        LOGGER.debug(f"[Anitsu] Adicionando cabeçalhos à URL: {headers_list}")
+        url_with_header = f"{url}||{'|'.join(headers_list)}"
+    else:
+        LOGGER.warning(
+            "[Anitsu] Nenhum header de autenticação disponível "
+            "(cookie ou token). O download poderá falhar com Authorization failed"
+        )
+        url_with_header = url
+
     fname = os.path.basename(fpath)
     LOGGER.info(f"[Anitsu] Iniciando {action.upper()} para: {fname}")
     _clear(user_id)
 
     # Cria uma mensagem falsa com o comando correspondente para chamar o handler nativo
     if action == "mirror":
-        fake_text = f"/mirror {url}"
+        fake_text = f"/mirror {url_with_header}"
     else:
-        fake_text = f"/leech {url}"
+        fake_text = f"/leech {url_with_header}"
 
     await edit_message(
         query.message,

@@ -7,7 +7,10 @@ O comando anitsu tentava carregar o arquivo de cookie apenas de `Config.ANITSU_C
 - Pode estar vazio ou não configurado
 - Não considerava arquivos salvos via `botset private`
 - Não tinha fallback para nomes padrão como `anitsu_cookies.txt`
+### 4. **Cabeçalhos de Autenticação Ausentes**
+O download final enviava somente a URL, sem cookies nem token, o que gerava erro "Authorization failed" quando os cookies expiravam ou não estavam disponíveis.
 
+**Correção:** o bot agora injeta automaticamente `Cookie:` e também o cabeçalho `Authorization: Bearer ...` (extraído dos tokens Supabase) nas requisições, garantindo acesso mesmo quando apenas o JWT está válido.
 ### 2. **Desconexão entre botset private e Anitsu**
 Embora `anitsu_cookies.txt` estivesse na lista de arquivos privados que podem ser salvos via botset:
 - O arquivo era armazenado no MongoDB
@@ -111,6 +114,8 @@ ANITSU_COOKIE_FILE = "anitsu_cookies.txt"
 ```
 
 ## 📋 Fluxo de Carregamento
+
+(Atualizado para incluir autenticação por cabeçalho quando disponível)
 
 ```
 /anitsuleech chamado
