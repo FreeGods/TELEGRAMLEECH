@@ -1,0 +1,350 @@
+cat > /sdcard/central_downloader.py << 'PYEOF'
+import httpx, re, os, zipfile
+from collections import defaultdict
+
+BASE = 'https://centralnovel.com'
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    'Accept-Language': 'pt-BR,pt;q=0.9',
+}
+
+def buscar(termo):
+    """Busca novels por termo"""
+    print(f'Buscando: {termo}')
+    r = httpx.get(BASE, params={'s': termo}, headers=HEADERS, follow_redirects=True, timeout=30)
+    links = re.findall(r'href=["\'](' + re.escape(BASE) + r'/series/[^"\']+/)["\']', r.text)
+    vistos, resultado = set(), []
+    for link in links:
+        if link not in vistos:
+            vistos.add(link)
+            titulo = link.split('/series/')[-1].rstrip('/').replace('-', ' ').title()
+            resultado.append({'url': link, 'title': titulo})
+    return resultado
+
+def listar_volumes_e_capitulos(url_novel):
+    """Extrai estrutura de volumes e capítulos"""
+    print(f'Listando volumes e capítulos...')
+    r = httpx.get(url_novel, headers=HEADERS, follow_redirects=True, timeout=30)
+    html = r.text
+    
+    slug = url_novel.split('/series/')[-1].rstrip('/')
+    
+    # Extrai padrão "Vol. X Cap. Y"
+    vol_cap_pattern = re.findall(r'Vol\.\s*(\d+)\s*Cap\.\s*(\d+)', html, re.IGNORECASE)
+    
+    volumes = defaultdict(list)
+    for vol, cap in vol_cap_pattern:
+        vol_num = int(vol)
+        cap_num = int(cap)
+        url = f'{BASE}/{slug}-capitulo-{cap_num}/'
+        volumes[vol_num].append({'numero': cap_num, 'url': url})
+    
+    # Ordena capítulos dentro de cada volume
+    for vol in volumes:
+        volumes[vol].sort(key=lambda c: c['numero'])
+    
+    return dict(sorted(volumes.items()))
+
+def limpar_paragrafo(p):
+    """Remove lixo de parágrafos"""
+    lixo_keywords = [
+        'comentário', 'inscrever', 'login', 'conectar', 'discord', 
+        'concordo', 'email', 'nome*', 'label', 'inline feedbacks',
+        'mais votado', 'mais recente', 'criar uma conta', 'privacidade',
+        'notificar', 'botão de login', 'compartilhadas pelo provedor'
+    ]
+    p_lower = p.lower()
+    if any(kw in p_lower for kw in lixo_keywords):
+        return None
+    
+    texto_limpo = re.sub(r'<[^>]+>', '', p)
+    texto_limpo = re.sub(r'&[a-z]+;', '', texto_limpo)
+    if len(texto_limpo.strip()) < 10:
+        return None
+    
+    if re.match(r'^[\s\W]*$', texto_limpo):
+        return None
+    
+    return p
+
+def preservar_formatacao(html):
+    """Preserva cores e formatação, remove classes"""
+    html = re.sub(r' class=["\'][^"\']*["\']', '', html)
+    html = re.sub(r'\s+', ' ', html)
+    html = re.sub(r'(&nbsp;){2,}', '&nbsp;', html)
+    return html
+
+def baixar_capitulo(url_cap):
+    """Baixa conteúdo de um capítulo"""
+    r = httpx.get(url_cap, headers=HEADERS, follow_redirects=True, timeout=30)
+    html = r.text
+    
+    # Encontra entry-content
+    idx = html.find('entry-content')
+    if idx < 0:
+        return None, []
+    
+    # Para antes dos comentários
+    fim_idx = html.find('wpd-thread-list', idx)
+    if fim_idx < 0:
+        fim_idx = html.find('comment', idx)
+    if fim_idx < 0:
+        fim_idx = idx + 100000
+    
+    trecho = html[idx:fim_idx]
+    
+    # Extrai parágrafos
+    paragrafos = re.findall(r'<p[^>]*>(.*?)</p>', trecho, re.DOTALL)
+    
+    # Limpa e preserva formatação
+    paragrafos_limpos = []
+    for p in paragrafos:
+        limpo = limpar_paragrafo(p)
+        if limpo:
+            limpo = preservar_formatacao(limpo)
+            paragrafos_limpos.append(f'<p>{limpo}</p>')
+    
+    html_content = '\n'.join(paragrafos_limpos)
+    
+    # Extrai imagens
+    imagens = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', html_content)
+    imagens = [i for i in imagens if any(x in i for x in ['wp-content', 'uploads', 'centralnovel'])]
+    
+    return html_content, imagens
+
+def baixar_imagem(url):
+    """Baixa uma imagem"""
+    try:
+        r = httpx.get(url, headers=HEADERS, timeout=30)
+        return r.content
+    except:
+        return None
+
+def criar_epub(titulo, autor, volumes_data, pasta):
+    """Cria EPUB com estrutura de volumes"""
+    print(f'\nCriando EPUB: {titulo}')
+    os.makedirs(pasta, exist_ok=True)
+    epub_name = re.sub(r'[^\w]', '_', titulo)
+    temp_dir = f'{pasta}/{epub_name}_temp'
+    os.makedirs(f'{temp_dir}/META-INF', exist_ok=True)
+    os.makedirs(f'{temp_dir}/OEBPS/images', exist_ok=True)
+    os.makedirs(f'{temp_dir}/OEBPS/text', exist_ok=True)
+    
+    # mimetype
+    with open(f'{temp_dir}/mimetype', 'w') as f:
+        f.write('application/epub+zip')
+    
+    # container.xml
+    with open(f'{temp_dir}/META-INF/container.xml', 'w') as f:
+        f.write('''<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>''')
+    
+    # CSS
+    css = '''@charset "UTF-8";
+
+body {
+    font-family: "Georgia", "Palatino", "Times New Roman", serif;
+    margin: 1.5em 1em;
+    line-height: 1.8;
+    color: #2c2c2c;
+    font-size: 1.1em;
+    text-rendering: optimizeLegibility;
+}
+
+h1 {
+    text-align: center;
+    margin: 2.5em 0 2em 0;
+    font-size: 2em;
+    font-weight: bold;
+    color: #1a1a1a;
+    border-bottom: 2px solid #ccc;
+    padding-bottom: 0.5em;
+}
+
+p {
+    margin: 1em 0;
+    text-align: justify;
+    text-indent: 1.5em;
+    word-spacing: normal;
+    letter-spacing: 0.01em;
+    hyphens: auto;
+}
+
+h1 + p {
+    text-indent: 0;
+}
+
+em, i { font-style: italic; }
+strong, b { font-weight: bold; color: #1a1a1a; }
+
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 2em auto;
+}
+
+* {
+    word-spacing: normal;
+    letter-spacing: normal;
+}
+'''
+    with open(f'{temp_dir}/OEBPS/style.css', 'w', encoding='utf-8') as f:
+        f.write(css)
+    
+    imagens_map = {}
+    manifest_items = ['<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>',
+                      '<item id="css" href="style.css" media-type="text/css"/>']
+    spine_items = []
+    toc_nav = []
+    
+    cap_count = 0
+    for vol_num, capitulos in volumes_data.items():
+        print(f'\n  Volume {vol_num}: {len(capitulos)} capítulos')
+        
+        for cap in capitulos:
+            cap_count += 1
+            html_content, img_urls = cap['html'], cap['imgs']
+            
+            # Baixa imagens
+            for img_url in img_urls:
+                if img_url not in imagens_map:
+                    img_data = baixar_imagem(img_url)
+                    if img_data:
+                        ext = img_url.split('.')[-1].split('?')[0][:4]
+                        img_name = f'img_{len(imagens_map)}.{ext}'
+                        with open(f'{temp_dir}/OEBPS/images/{img_name}', 'wb') as f:
+                            f.write(img_data)
+                        imagens_map[img_url] = img_name
+                        manifest_items.append(f'<item id="img{len(imagens_map)}" href="images/{img_name}" media-type="image/{ext}"/>')
+            
+            # Substitui URLs de imagens
+            for old_url, new_name in imagens_map.items():
+                html_content = html_content.replace(old_url, f'../images/{new_name}')
+            
+            # Cria XHTML
+            cap_file = f'vol{vol_num}_cap{cap["numero"]}.xhtml'
+            cap_html = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="UTF-8"/>
+<title>Volume {vol_num} - Capítulo {cap["numero"]}</title>
+<link rel="stylesheet" type="text/css" href="../style.css"/>
+</head>
+<body>
+<h1>Volume {vol_num} - Capítulo {cap["numero"]}</h1>
+{html_content}
+</body>
+</html>'''
+            with open(f'{temp_dir}/OEBPS/text/{cap_file}', 'w', encoding='utf-8') as f:
+                f.write(cap_html)
+            
+            manifest_items.append(f'<item id="cap{cap_count}" href="text/{cap_file}" media-type="application/xhtml+xml"/>')
+            spine_items.append(f'<itemref idref="cap{cap_count}"/>')
+            toc_nav.append(f'<navPoint id="cap{cap_count}" playOrder="{cap_count}"><navLabel><text>Vol {vol_num} Cap {cap["numero"]}</text></navLabel><content src="text/{cap_file}"/></navPoint>')
+    
+    # content.opf
+    with open(f'{temp_dir}/OEBPS/content.opf', 'w', encoding='utf-8') as f:
+        f.write(f'''<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{titulo}</dc:title>
+    <dc:creator>{autor}</dc:creator>
+    <dc:language>pt</dc:language>
+    <dc:identifier id="BookId">centralnovel-{epub_name}</dc:identifier>
+  </metadata>
+  <manifest>
+{chr(10).join(manifest_items)}
+  </manifest>
+  <spine toc="ncx">
+{chr(10).join(spine_items)}
+  </spine>
+</package>''')
+    
+    # toc.ncx
+    with open(f'{temp_dir}/OEBPS/toc.ncx', 'w', encoding='utf-8') as f:
+        f.write(f'''<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="centralnovel-{epub_name}"/></head>
+  <docTitle><text>{titulo}</text></docTitle>
+  <navMap>
+{chr(10).join(toc_nav)}
+  </navMap>
+</ncx>''')
+    
+    # Cria ZIP (EPUB)
+    epub_path = f'{pasta}/{epub_name}.epub'
+    with zipfile.ZipFile(epub_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.write(f'{temp_dir}/mimetype', 'mimetype', compress_type=zipfile.ZIP_STORED)
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                if file == 'mimetype':
+                    continue
+                full_path = os.path.join(root, file)
+                arc_path = full_path[len(temp_dir)+1:]
+                zf.write(full_path, arc_path)
+    
+    os.system(f'rm -rf {temp_dir}')
+    return epub_path
+
+# === EXEMPLO DE USO ===
+if __name__ == '__main__':
+    print('=== CENTRAL NOVEL DOWNLOADER ===\n')
+    
+    # Busca
+    resultados = buscar('solo leveling')
+    print(f'\nResultados encontrados: {len(resultados)}')
+    for i, r in enumerate(resultados[:5], 1):
+        print(f'{i}. {r["title"]}')
+    
+    # Seleciona novel
+    novel = next((r for r in resultados if 'solo-leveling' in r['url']), resultados[0])
+    print(f'\n✓ Selecionado: {novel["title"]}\n')
+    
+    # Lista volumes
+    volumes = listar_volumes_e_capitulos(novel['url'])
+    print(f'\n{"="*60}')
+    print(f'ESTRUTURA: {len(volumes)} volumes')
+    print(f'{"="*60}')
+    for vol_num, caps in volumes.items():
+        print(f'  Volume {vol_num}: {len(caps)} capítulos (Cap {caps[0]["numero"]} - {caps[-1]["numero"]})')
+    
+    # Baixa primeiros 3 caps de cada volume
+    print(f'\n{"="*60}')
+    print('BAIXANDO AMOSTRA (3 caps por volume)')
+    print(f'{"="*60}')
+    
+    volumes_data = {}
+    for vol_num, caps in volumes.items():
+        volumes_data[vol_num] = []
+        for cap in caps[:3]:  # Só 3 caps por volume para teste
+            print(f'  Vol {vol_num} Cap {cap["numero"]}... ', end='', flush=True)
+            html, imgs = baixar_capitulo(cap['url'])
+            if html:
+                volumes_data[vol_num].append({
+                    'numero': cap['numero'],
+                    'html': html,
+                    'imgs': imgs
+                })
+                print(f'✓ {len(html)} chars, {len(imgs)} imgs')
+            else:
+                print('✗ Falhou')
+    
+    # Cria EPUB
+    epub_path = criar_epub('Solo Leveling', 'Chugong', volumes_data, '/sdcard/novels')
+    
+    print(f'\n{"="*60}')
+    print(f'✅ EPUB CRIADO')
+    print(f'{"="*60}')
+    print(f'Arquivo: {epub_path}')
+    print(f'Tamanho: {os.path.getsize(epub_path)/1024/1024:.2f} MB')
+    print(f'{"="*60}')
+
+PYEOF
+
+python3 /sdcard/central_downloader.py

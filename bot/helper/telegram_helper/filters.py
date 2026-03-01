@@ -95,3 +95,11 @@ class CustomFilters:
         return user_id in manga_user_state
 
     manga_session = create(manga_session_active)
+
+    async def novel_session_active(self, _, update):
+        """Filter que retorna True apenas se há uma sessão ativa do novelleech para o usuário"""
+        from ...modules.novelleech import novel_user_state
+        user_id = (update.from_user or update.sender_chat).id
+        return user_id in novel_user_state
+
+    novel_session = create(novel_session_active)
