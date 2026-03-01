@@ -66,7 +66,8 @@ if self.db_handler:
 - `AnitsuClient.__init__()` agora aceita `db_handler` e `user_id`
 - `_load_cookies()` agora:
   - ✅ Carrega cookies do arquivo (como antes)
-  - ✅ Inicializa SupabaseTokenManager
+  - ✅ Inicializa SupabaseTokenManager  (arquivo de cookies poderá ser
+        escrito após refresh para guardar o novo refresh_token)
   - ✅ **NOVO:** Se tokens não foram encontrados nos cookies, tenta carregar do MongoDB
   - ✅ Restaura tokens salvos se disponíveis
 

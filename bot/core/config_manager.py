@@ -118,6 +118,8 @@ class Config:
     UPDATE_PKGS = True
     USENET_SERVERS = []
     USER_SESSION_STRING = ""
+    # supabase anon key used when hitting refresh endpoint; configurable via botsettings
+    ANITSU_SUPABASE_ANON_KEY = ""
     USER_TRANSMISSION = True
     USE_SERVICE_ACCOUNTS = False
     WEB_PINCODE = True
