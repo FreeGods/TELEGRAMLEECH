@@ -99,6 +99,11 @@ class CentralNovelDownloader:
         # Extrai slug da URL
         slug = novel_url.split("/series/")[-1].rstrip("/")
         
+        # Remove datas e identificadores (ex: -20230928, -20231115)
+        slug_clean = re.sub(r'-\d{8}$', '', slug)
+        if not slug_clean:
+            slug_clean = slug
+        
         # Procura por padrão "Vol. X Cap. Y"
         pattern = r"Vol\.\s*(\d+)\s*Cap\.\s*(\d+)"
         matches = re.findall(pattern, resp.text, re.IGNORECASE)
@@ -108,7 +113,7 @@ class CentralNovelDownloader:
         for vol_str, cap_str in matches:
             vol_num = int(vol_str)
             cap_num = int(cap_str)
-            cap_url = f"{self.BASE_URL}/{slug}-capitulo-{cap_num}/"
+            cap_url = f"{self.BASE_URL}/{slug_clean}-capitulo-{cap_num}/"
             
             volumes[vol_num].append({
                 "numero": cap_num,
@@ -231,7 +236,13 @@ class CentralNovelDownloader:
         """
         # Cria o livro EPUB
         book = epub.EpubBook()
-        book.set_id(f"cn-{re.sub(r'[^\\w]', '_', title)}")
+        # Use set_uid() para versões modernas do ebooklib
+        book_id = f"cn-{re.sub(r'[^\\w]', '_', title)}"
+        try:
+            book.set_uid(book_id)
+        except AttributeError:
+            # Fallback para versões antigas
+            book.set_id(book_id)
         book.set_title(title)
         book.set_language("pt-BR")
         book.add_author(author)
@@ -274,7 +285,10 @@ class CentralNovelDownloader:
         """
         
         css = epub.EpubItem()
-        css.set_id("style")
+        try:
+            css.set_uid("style")
+        except AttributeError:
+            css.set_id("style")
         css.set_file_name("style.css")
         css.content = css_content.encode("utf-8")
         book.add_item(css)
@@ -306,7 +320,11 @@ class CentralNovelDownloader:
                             img_name = f"img_{len(images_map)}.{ext}"
                             
                             img_item = epub.EpubItem()
-                            img_item.set_id(f"img{len(images_map)}")
+                            img_id = f"img{len(images_map)}"
+                            try:
+                                img_item.set_uid(img_id)
+                            except AttributeError:
+                                img_item.set_id(img_id)
                             img_item.set_file_name(f"images/{img_name}")
                             img_item.content = img_bytes
                             book.add_item(img_item)
@@ -322,7 +340,11 @@ class CentralNovelDownloader:
                 
                 # Cria capítulo EPUB
                 chapter = epub.EpubHtml()
-                chapter.set_id(f"vol{vol_num}_cap{cap_num}")
+                chapter_id = f"vol{vol_num}_cap{cap_num}"
+                try:
+                    chapter.set_uid(chapter_id)
+                except AttributeError:
+                    chapter.set_id(chapter_id)
                 chapter.set_file_name(f"vol{vol_num}_cap{cap_num}.xhtml")
                 chapter.set_language("pt-BR")
                 
