@@ -23,6 +23,7 @@ class BotCommands:
         "YtdlLeech": ["ytdlleech", "yl"],
         "NzbLeech": ["nzbleech", "nl"],
         "MangaLeech": ["mangaleech", "ml"],
+        "NovelLeech": ["novelleech", "nl"],
         "AnitsuLeech": ["anitsuleech", "al"],
         "Clone": ["clone", "cl"],
         "Count": "count",

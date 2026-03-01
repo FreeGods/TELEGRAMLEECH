@@ -397,6 +397,31 @@ async def add_handlers():
     )
     # ─────────────────────────────────────────────────────────────────────────
 
+    # ── Novel Leech ───────────────────────────────────────────────────────────
+    # Comando principal: /novelleech
+    TgClient.bot.add_handler(
+        MessageHandler(
+            novelleech,
+            filters=command(BotCommands.NovelLeechCommand if hasattr(BotCommands, 'NovelLeechCommand') else 'novelleech', case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Dispatcher único para TODOS os callbacks do fluxo novel (prefixo "nvl:")
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            novel_callback,
+            filters=regex(r"^nvl:\d+:"),
+        )
+    )
+    # Handler de texto para fases de espera (search / link / capítulos)
+    TgClient.bot.add_handler(
+        MessageHandler(
+            novel_text_handler,
+            filters=CustomFilters.novel_session,
+        )
+    )
+    # ─────────────────────────────────────────────────────────────────────────
+
     # ── Anitsu Leech ──────────────────────────────────────────────────────────
     # Diagnostic command: /anitsucheck
     TgClient.bot.add_handler(

@@ -9,6 +9,7 @@ aioqbt
 imdbinfo
 cloudscraper
 dnspython
+ebooklib
 fastapi
 feedparser
 google-api-python-client
