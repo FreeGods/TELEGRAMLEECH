@@ -8,6 +8,13 @@ O sistema Anitsu agora implementa **renovação automática de tokens Supabase**
 
 ## 🏗️ Arquitetura
 
+### 📦 Configuração adicional
+
+- **ANITSU_SUPABASE_ANON_KEY**: chave anônima do projeto Supabase. necessária no
+  cabeçalho `apikey` durante a renovação de tokens. pode ser definida em
+  `config.py` ou alterada pelo bot com `/botsettings` (usuários sudo têm acesso).
+
+
 ### Componentes Principais
 
 1. **SupabaseTokenManager** (`bot/helper/ext_utils/supabase_token_manager.py`)
@@ -21,6 +28,9 @@ O sistema Anitsu agora implementa **renovação automática de tokens Supabase**
 ---
 
 ## 🔄 Fluxo de Renovação de Token
+> 🛠️ **Novo**: sempre que o token for renovado o arquivo de cookies original é atualizado
+> com os novos valores (`.0` e `.1`). isso garante que reinicializações não quebrem o
+> fluxo, já que o `refresh_token` muda a cada chamada.
 
 ```
 Usuário faz requisição (ex: /anitsuleech)

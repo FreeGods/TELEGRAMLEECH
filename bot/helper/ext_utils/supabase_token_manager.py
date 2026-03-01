@@ -42,7 +42,7 @@ class SupabaseTokenManager:
     # Pattern to find Supabase auth cookies
     SUPABASE_COOKIE_PATTERN = r"sb-([a-z0-9]+)-auth-token"
     
-    def __init__(self, cookie_jar=None, db_handler=None, user_id=None):
+    def __init__(self, cookie_jar=None, db_handler=None, user_id=None, client=None):
         """
         Initialize token manager.
         
@@ -50,17 +50,34 @@ class SupabaseTokenManager:
             cookie_jar: http.cookiejar.MozillaCookieJar instance with loaded cookies
             db_handler: Optional DbManager instance for persisting renewed tokens
             user_id: Optional Telegram user ID for user-specific token persistence
+            client: Optional reference to the owning AnitsuClient instance. If
+                    provided the manager will call ``client._refresh_cookie_header()``
+                    whenever it updates cookies on disk so that the client's
+                    in-memory header stays in sync.
         """
         self.cookie_jar = cookie_jar
+        # optional link back to AnitsuClient so we can notify it of updates
+        self._client = client
+        # the path of the cookie file (if available) is stored so that we can
+        # persist refreshed tokens back into it later.
+        self.cookie_file: Optional[str] = None
+
         self.project_id: Optional[str] = None
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.expires_at: Optional[float] = None
         self.backend: Optional[str] = None
+        # keep the JSON object parsed from the cookie so we can rebuild it when
+        # tokens change (preserving any extra fields such as "user")
+        self._auth_data: Optional[Dict] = None
+
         self.db_handler = db_handler
         self.user_id = user_id
         
         if cookie_jar:
+            # record filename for later writes
+            if hasattr(cookie_jar, "filename"):
+                self.cookie_file = cookie_jar.filename
             self._extract_tokens_from_cookies()
     
     def _extract_tokens_from_cookies(self) -> bool:
@@ -140,6 +157,11 @@ class SupabaseTokenManager:
             LOGGER.debug(f"[SupabaseTokenManager] Token value: {full_auth_token[:100]}...")
             return False
         
+        # keep a reference to the original auth data so that we can later update
+        # its fields when we refresh tokens. other keys (like "user") should be
+        # preserved.
+        self._auth_data = auth_data
+
         # Extract tokens
         self.access_token = auth_data.get("access_token")
         self.refresh_token = auth_data.get("refresh_token")
@@ -224,11 +246,22 @@ class SupabaseTokenManager:
             "refresh_token": self.refresh_token
         }
         
+        # Add anon key from config if available. this is required by Supabase
+        # when renewing via the refresh endpoint.
+        from ...core.config_manager import Config
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        anon_key = getattr(Config, "ANITSU_SUPABASE_ANON_KEY", None)
+        if anon_key:
+            headers["apikey"] = anon_key
+            # supabase also accepts the anon key as a bearer token in Authorization
+            headers["Authorization"] = f"Bearer {anon_key}"
+        else:
+            LOGGER.warning("[SupabaseTokenManager] Chave anon do Supabase nao definida, a renovacao pode falhar")
         
         try:
             async with httpx.AsyncClient(timeout=30) as client:
@@ -273,6 +306,22 @@ class SupabaseTokenManager:
                 f"    Novo Refresh Token: {self.refresh_token[:10]}...\n"
                 f"    Válido por: {expires_in} segundos"
             )
+
+            # se tivermos dados originais do cookie, atualizamos para que o novo
+            # refresh_token também seja gravado no arquivo de cookies ficando
+            # persistente para reinicializações futuras.
+            if self._auth_data is not None:
+                self._auth_data["access_token"] = self.access_token
+                self._auth_data["refresh_token"] = self.refresh_token
+                if expires_in:
+                    self._auth_data["expires_in"] = expires_in
+                if self.expires_at:
+                    self._auth_data["expires_at"] = self.expires_at
+                # tentativa de escrever no arquivo de cookies
+                try:
+                    self._write_tokens_to_cookie_file()
+                except Exception as e:
+                    LOGGER.warning(f"[SupabaseTokenManager] ⚠️ Falha ao gravar tokens no arquivo de cookies: {e}")
             
             # ✅ NOVA: Salvar tokens renovados no MongoDB
             if self.db_handler:
@@ -338,6 +387,86 @@ class SupabaseTokenManager:
             "expires_at": self.expires_at,
             "project_id": self.project_id,
         }
+
+    def _write_tokens_to_cookie_file(self) -> bool:
+        """
+        Re-write the parts of the Supabase auth-token cookies in the original
+        Netscape-format cookie file using the current values in ``_auth_data``.
+        This updates both the access and refresh tokens so that a restart of the
+        bot will pick up the newest refresh token and avoid the "apenas uma
+        renovação de ficheiro" error.
+
+        The method is intentionally conservative: it only alters the value field
+        of the cookies and leaves all other lines untouched. If the expected
+        cookies are missing it logs a warning but does not raise.
+        """
+        if not self.cookie_file or not self._auth_data or not self.project_id:
+            LOGGER.warning("[SupabaseTokenManager] Sem dados para gravar cookies")
+            return False
+
+        # Build new encoded value from self._auth_data
+        try:
+            import base64 as _b64
+
+            json_str = json.dumps(self._auth_data, separators=(",", ":"))
+            b64 = _b64.b64encode(json_str.encode("utf-8")).decode("utf-8")
+            # strip padding to mimic original format
+            b64 = b64.rstrip("=")
+            new_value = "base64-" + b64
+            # split roughly in half so that the two cookie parts remain similar size
+            half = len(new_value) // 2
+            part0 = new_value[:half]
+            part1 = new_value[half:]
+        except Exception as e:
+            LOGGER.error(f"[SupabaseTokenManager] Erro ao codificar cookie: {e}")
+            return False
+
+        try:
+            lines = []
+            with open(self.cookie_file, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if f"sb-{self.project_id}-auth-token.0" in line:
+                        parts = line.rstrip("\n").split("\t")
+                        parts[-1] = part0
+                        lines.append("\t".join(parts) + "\n")
+                    elif f"sb-{self.project_id}-auth-token.1" in line:
+                        parts = line.rstrip("\n").split("\t")
+                        parts[-1] = part1
+                        lines.append("\t".join(parts) + "\n")
+                    else:
+                        lines.append(line)
+            with open(self.cookie_file, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            LOGGER.info(f"[SupabaseTokenManager] Cookies atualizados em {self.cookie_file}")
+
+            # if we still have the original jar in memory, update its values too and
+            # persist it. this keeps the httpx.Cookies object used by AnitsuClient in
+            # sync with the file on disk.
+            try:
+                if self.cookie_jar:
+                    for cookie in list(self.cookie_jar):
+                        if cookie.name.endswith(".0"):
+                            cookie.value = part0
+                        elif cookie.name.endswith(".1"):
+                            cookie.value = part1
+                    # saving may overwrite the file but that's fine because we just
+                    # wrote it manually
+                    self.cookie_jar.save(ignore_discard=True, ignore_expires=True)
+            except Exception as e:
+                LOGGER.warning(f"[SupabaseTokenManager] ⚠️ Falha ao atualizar jar em memória: {e}")
+
+            # let owning client know that cookies have changed so it can rebuild
+            # its header if necessary
+            if self._client and hasattr(self._client, "_refresh_cookie_header"):
+                try:
+                    self._client._refresh_cookie_header()
+                except Exception as e:
+                    LOGGER.warning(f"[SupabaseTokenManager] ⚠️ falha ao notificar cliente: {e}")
+
+            return True
+        except Exception as e:
+            LOGGER.error(f"[SupabaseTokenManager] Falha ao escrever arquivo de cookies: {e}")
+            return False
     
     def from_dict(self, data: Dict) -> bool:
         """

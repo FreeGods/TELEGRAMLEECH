@@ -133,6 +133,8 @@ JD_PASS = ""
 
 # Anitsu Cloud
 ANITSU_COOKIE_FILE = ""
+# Supabase anon key used when refreshing tokens. you can change it later via /botsettings (sudo)
+ANITSU_SUPABASE_ANON_KEY = ""
 
 # Sabnzbd
 USENET_SERVERS = [

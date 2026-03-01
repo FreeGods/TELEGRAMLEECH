@@ -120,6 +120,10 @@ class AnitsuClient:
             jar = http.cookiejar.MozillaCookieJar(self.cookie_file)
             jar.load(ignore_discard=True, ignore_expires=True)
 
+            # keep a reference so we can update header later if the manager writes
+            # cookies back to disk
+            self._cookie_jar = jar
+
             # Convert to httpx.Cookies
             self._cookies = httpx.Cookies()
             # Also build a Cookie header string to force-send cookies when necessary
@@ -147,7 +151,7 @@ class AnitsuClient:
             
             # Initialize Supabase token manager
             LOGGER.debug(f"[AnitsuClient] Inicializando gerenciador de tokens Supabase...")
-            self._token_manager = SupabaseTokenManager(jar, self.db_handler, self.user_id)
+            self._token_manager = SupabaseTokenManager(jar, self.db_handler, self.user_id, client=self)
             
             # ✅ NOVA: Tentar carregar tokens salvos do MongoDB
             if self._token_manager.project_id and not self._token_manager.access_token:
@@ -169,6 +173,14 @@ class AnitsuClient:
                         if saved:
                             if self._token_manager.from_dict(saved):
                                 LOGGER.info(f"[AnitsuClient] ✅ Tokens restaurados com sucesso do MongoDB")
+                                # persistência opcional: escrevemos os tokens carregados
+                                # também no arquivo de cookies, sincronizando-o com o
+                                # banco de dados. não precisamos chamar a API de
+                                # refresh; basta gravar os valores atuais.
+                                try:
+                                    self._token_manager._write_tokens_to_cookie_file()
+                                except Exception as e:
+                                    LOGGER.warning(f"[AnitsuClient] ⚠️ Falha ao gravar tokens restaurados no cookie: {e}")
                             else:
                                 LOGGER.warning(f"[AnitsuClient] ⚠️ Falha ao restaurar tokens do MongoDB")
                     except Exception as e:
@@ -209,6 +221,25 @@ class AnitsuClient:
     def refresh_cookies(self):
         """Reload cookies from file (use after exporting new cookies)."""
         self._load_cookies()
+
+    def _refresh_cookie_header(self):
+        """Rebuild the internal ``_cookies`` and ``_cookie_header`` values from
+        the in‑memory cookie jar.  This is called by the token manager when it
+        updates the cookie file on disk so that the client keeps sending the
+        newest tokens without requiring a full reload.
+        """
+        if not hasattr(self, "_cookie_jar") or self._cookie_jar is None:
+            return
+        self._cookies = httpx.Cookies()
+        pairs = []
+        for cookie in self._cookie_jar:
+            try:
+                self._cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
+                pairs.append(f"{cookie.name}={cookie.value}")
+            except Exception as e:
+                LOGGER.debug(f"[AnitsuClient] Falha ao atualizar cookie em memória: {e}")
+        self._cookie_header = ";".join(pairs) if pairs else ""
+        LOGGER.debug("[AnitsuClient] Cookie header atualizado após refresh de tokens")
 
     async def _get(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
         """Internal GET request handler with automatic token refresh."""

@@ -120,4 +120,54 @@ print("called texts:", called)
 print("test passed" if len(set(called)) == 3 else "test failed")
 PYCODE
 
+
+# verify that SupabaseTokenManager can rewrite cookie file parts
+python3 - <<'PYCODE'
+import http.cookiejar, tempfile, os, json
+from bot.helper.ext_utils.supabase_token_manager import SupabaseTokenManager
+
+# create temporary cookie file with dummy parts
+cookie_path = 'tmp_test_cookie.txt'
+with open(cookie_path, 'w') as f:
+    f.write('.anitsu.moe\tTRUE\t/\tFALSE\t0\tsb-test-auth-token.0\tbase64-old0\n')
+    f.write('.anitsu.moe\tTRUE\t/\tFALSE\t0\tsb-test-auth-token.1\told1\n')
+
+# we don't actually need a proper jar for this test; we'll construct
+# manager manually and supply the file path.
+#jar = http.cookiejar.MozillaCookieJar(cookie_path)
+#jar.load(ignore_discard=True, ignore_expires=True)
+
+mgr = SupabaseTokenManager(None)
+mgr.project_id = 'test'
+mgr.cookie_file = cookie_path
+mgr._auth_data = {'access_token':'newa','refresh_token':'newr','expires_at':456,'expires_in':3600}
+
+mgr.access_token = 'newa'
+mgr.refresh_token = 'newr'
+
+# test that client callback is triggered
+class DummyClient:
+    def __init__(self):
+        self.called = False
+    def _refresh_cookie_header(self):
+        self.called = True
+
+dummy = DummyClient()
+mgr._client = dummy
+mgr._write_tokens_to_cookie_file()
+print('callback invoked on client?', dummy.called)
+
+# ensure config variable exists and can be changed
+from bot.core.config_manager import Config
+print('anon key before:', Config.ANITSU_SUPABASE_ANON_KEY)
+Config.set('ANITSU_SUPABASE_ANON_KEY', 'fakekey123')
+print('anon key after:', Config.ANITSU_SUPABASE_ANON_KEY)
+
+print('cookie contents after write:')
+with open(cookie_path) as f:
+    print(f.read())
+
+os.remove(cookie_path)
+PYCODE
+
 echo "✅ Tudo pronto para testes!"

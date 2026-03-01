@@ -958,6 +958,12 @@ async def anitsucheck(client, message):
         # 3. Verificar arquivo de cookies
         from ..core.config_manager import Config
         cookie_file_to_check = user_cookie_file or getattr(Config, 'ANITSU_COOKIE_FILE', None) or "anitsu_cookies.txt"
+        # also show whether anon key is configured
+        anon = getattr(Config, "ANITSU_SUPABASE_ANON_KEY", "")
+        if anon:
+            report.append("✅ Supabase anon key configurada")
+        else:
+            report.append("⚠️ Supabase anon key não configurada. Use /botsettings var ANITSU_SUPABASE_ANON_KEY <key> ou edite config.py")
         
         if os.path.exists(cookie_file_to_check):
             file_size = os.path.getsize(cookie_file_to_check)
