@@ -665,17 +665,53 @@ async def _handle_file_action(client, query, user_id: int, state: dict, action: 
         f"<i>Processando {len(filepaths)} arquivo(s)...</i>"
     )
     
-    # Chama handlers nativos de mirror/leech
+    # Chama handlers nativos de mirror/leech com delays para evitar rate limiting
     try:
         from ..modules.mirror_leech import mirror, leech
-        message = query.message
-        message.text = fake_text
         
-        LOGGER.debug(f"[Anitsu] Chamando handler de {action} com {len(urls)} URL(s)")
-        if action == "mirror":
-            await mirror(client, message)
-        else:
-            await leech(client, message)
+        # Configurações de rate limiting e retry
+        DELAY_BETWEEN_REQUESTS = 2.5  # segundos entre requisições
+        MAX_RETRIES = 2
+        BACKOFF_MULTIPLIER = 1.5
+        
+        for idx, url in enumerate(urls_with_headers, 1):
+            command = f"/mirror {url}" if action == "mirror" else f"/leech {url}"
+            
+            # Retry logic com backoff exponencial
+            retry_delay = DELAY_BETWEEN_REQUESTS
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    LOGGER.info(f"[Anitsu] {action.upper()} {idx}/{len(urls_with_headers)} - Tentativa {attempt + 1}/{MAX_RETRIES + 1}")
+                    
+                    # Cria uma cópia da mensagem para cada requisição
+                    import copy
+                    msg_copy = copy.copy(query.message)
+                    msg_copy.text = command
+                    
+                    if action == "mirror":
+                        await mirror(client, msg_copy)
+                    else:
+                        await leech(client, msg_copy)
+                    
+                    break  # Sucesso, saí do loop de retries
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    is_rate_limit = "503" in error_msg or "rate" in error_msg or "too many" in error_msg
+                    
+                    if is_rate_limit and attempt < MAX_RETRIES:
+                        LOGGER.warning(f"[Anitsu] Rate limit detectado na tentativa {attempt + 1}, aguardando {retry_delay}s antes de retry...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= BACKOFF_MULTIPLIER
+                    else:
+                        LOGGER.exception(f"[Anitsu] Erro ao executar {action} (tentativa {attempt + 1}): {e}")
+                        raise
+            
+            # Delay entre cada requisição (exceto a última)
+            if idx < len(urls_with_headers):
+                LOGGER.debug(f"[Anitsu] Aguardando {DELAY_BETWEEN_REQUESTS}s antes de processar próximo arquivo...")
+                await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
+                
     except Exception as e:
         LOGGER.exception(f"[Anitsu] Erro ao chamar handler de {action}: {e}")
         await edit_message(query.message, f"❌ Erro ao iniciar {action}: {str(e)[:100]}")

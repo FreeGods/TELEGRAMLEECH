@@ -663,12 +663,20 @@ async def _handle_file_action(client, query, user_id: int, state: dict, action: 
     # assíncrona. Se reutilizarmos o mesmo objeto e alterarmos seu .text no loop,
     # todas as tarefas acabarão vendo o último valor, resultando em downloads
     # repetidos do mesmo arquivo (o bug relatado).
+    #
+    # IMPORTANTE: Delays entre requisições para evitar rate limiting (erro 503)
     try:
         from ..modules.mirror_leech import mirror, leech
         original_message = query.message
 
-        LOGGER.debug(f"[Anitsu] Chamando handler de {action} para {len(urls)} URL(s)")
-        for url in urls:
+        LOGGER.debug(f"[Anitsu] Chamando handler de {action} para {len(urls)} URL(s) com delays")
+        
+        # Configurações de rate limiting e retry
+        DELAY_BETWEEN_REQUESTS = 2.5  # segundos entre requisições
+        MAX_RETRIES = 2
+        BACKOFF_MULTIPLIER = 1.5
+        
+        for idx, url in enumerate(urls, 1):
             command = f"/mirror {url}" if action == "mirror" else f"/leech {url}"
             # make a shallow copy so that each task captures its own message object
             try:
@@ -684,10 +692,37 @@ async def _handle_file_action(client, query, user_id: int, state: dict, action: 
                         setattr(msg_copy, attr, getattr(original_message, attr))
             msg_copy.text = command
 
-            if action == "mirror":
-                await mirror(client, msg_copy)
-            else:
-                await leech(client, msg_copy)
+            # Retry logic com backoff exponencial
+            retry_delay = DELAY_BETWEEN_REQUESTS
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    LOGGER.info(f"[Anitsu] {action.upper()} {idx}/{len(urls)} - Tentativa {attempt + 1}/{MAX_RETRIES + 1}")
+                    
+                    if action == "mirror":
+                        await mirror(client, msg_copy)
+                    else:
+                        await leech(client, msg_copy)
+                    
+                    break  # Sucesso, saí do loop de retries
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    is_rate_limit = "503" in error_msg or "rate" in error_msg or "too many" in error_msg
+                    
+                    if is_rate_limit and attempt < MAX_RETRIES:
+                        LOGGER.warning(f"[Anitsu] Rate limit detectado në attempt {attempt + 1}, aguardando {retry_delay}s antes de retry...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= BACKOFF_MULTIPLIER
+                    else:
+                        LOGGER.exception(f"[Anitsu] Erro ao executar {action} (tentativa {attempt + 1}): {e}")
+                        raise
+            
+            # Delay entre cada requisição para evitar overwhelming do servidor
+            # (menor entre a última requisição do lote)
+            if idx < len(urls):
+                LOGGER.debug(f"[Anitsu] Aguardando {DELAY_BETWEEN_REQUESTS}s antes de processar próximo arquivo...")
+                await asyncio.sleep(DELAY_BETWEEN_REQUESTS)
+                
     except Exception as e:
         LOGGER.exception(f"[Anitsu] Erro ao chamar handler de {action}: {e}")
         await edit_message(query.message, f"❌ Erro ao iniciar {action}: {str(e)[:100]}")

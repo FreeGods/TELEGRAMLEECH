@@ -111,7 +111,7 @@ class Config:
     TIMEZONE = "Asia/Kolkata"
     USER_MAX_TASKS = 0
     USER_TIME_INTERVAL = 0
-    DL_REQUEST_DELAY = 1
+    DL_REQUEST_DELAY = 2
     UPLOAD_PATHS = {}
     UPSTREAM_REPO = ""
     UPSTREAM_BRANCH = "master"
