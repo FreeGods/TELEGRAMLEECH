@@ -439,13 +439,13 @@ async def anitsu_callback(client, query):
         # ── Ações após seleção de intervalo ──────
         if action == "act":
             await query.answer()
-            await _handle_file_action(query, cb_user_id, state, param)
+            await _handle_file_action(client, query, cb_user_id, state, param)
             return
 
         # ── Mirror / Leech ────────────────────────
         if action in ("mirror", "leech"):
             await query.answer()
-            await _handle_download_action(query, cb_user_id, state, action, param)
+            await _handle_download_action(client, query, cb_user_id, state, action, param)
             return
 
         # ── Voltar ────────────────────────────────
@@ -603,7 +603,7 @@ async def _handle_file_selection(query, user_id: int, state: dict, range_input: 
     await edit_active_msg(txt, markup)
 
 
-async def _handle_file_action(query, user_id: int, state: dict, action: str):
+async def _handle_file_action(client, query, user_id: int, state: dict, action: str):
     """Processa ação de mirror/leech para múltiplos arquivos selecionados."""
     if action not in ("mirror", "leech"):
         return
@@ -673,15 +673,15 @@ async def _handle_file_action(query, user_id: int, state: dict, action: str):
         
         LOGGER.debug(f"[Anitsu] Chamando handler de {action} com {len(urls)} URL(s)")
         if action == "mirror":
-            await mirror(None, message)
+            await mirror(client, message)
         else:
-            await leech(None, message)
+            await leech(client, message)
     except Exception as e:
         LOGGER.exception(f"[Anitsu] Erro ao chamar handler de {action}: {e}")
         await edit_message(query.message, f"❌ Erro ao iniciar {action}: {str(e)[:100]}")
 
 
-async def _handle_download_action(query, user_id: int, state: dict, action: str, fpath_enc: str):
+async def _handle_download_action(client, query, user_id: int, state: dict, action: str, fpath_enc: str):
     """Mirror ou Leech o arquivo."""
     import base64
     try:
@@ -747,10 +747,10 @@ async def _handle_download_action(query, user_id: int, state: dict, action: str,
 
         if action == "mirror":
             LOGGER.debug(f"[Anitsu] Chamando handler de mirror")
-            await mirror(None, message)
+            await mirror(client, message)
         else:
             LOGGER.debug(f"[Anitsu] Chamando handler de leech")
-            await leech(None, message)
+            await leech(client, message)
     except Exception as e:
         LOGGER.exception(f"[Anitsu] Erro ao executar {action}: {e}")
         await send_message(
