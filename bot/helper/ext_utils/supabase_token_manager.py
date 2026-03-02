@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from time import time
 
 import httpx
+import asyncio
 
 from ...core.config_manager import Config
 from ... import LOGGER
@@ -73,6 +74,11 @@ class SupabaseTokenManager:
 
         self.db_handler = db_handler
         self.user_id = user_id
+        # lock to serialize concurrent refresh attempts
+        try:
+            self._refresh_lock = asyncio.Lock()
+        except Exception:
+            self._refresh_lock = None
         
         if cookie_jar:
             # record filename for later writes
@@ -263,39 +269,106 @@ class SupabaseTokenManager:
         else:
             LOGGER.warning("[SupabaseTokenManager] Chave anon do Supabase nao definida, a renovacao pode falhar")
         
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    url,
-                    json=payload,
-                    headers=headers,
-                )
-            
+        # allow one retry if we detect that the refresh_token was already used
+        max_attempts = 2
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+
+            # ensure only one coroutine performs a refresh at a time
+            lock = self._refresh_lock
+            if lock is None:
+                # try to create lock lazily
+                try:
+                    lock = asyncio.Lock()
+                    self._refresh_lock = lock
+                except Exception:
+                    lock = None
+
+            if lock:
+                async with lock:
+                    # re-check token after acquiring lock: another task may have refreshed it
+                    if self.is_token_valid():
+                        LOGGER.debug("[SupabaseTokenManager] Token já válido após aguardar lock")
+                        return True
+                    payload["refresh_token"] = self.refresh_token
+                    try:
+                        async with httpx.AsyncClient(timeout=30) as client:
+                            resp = await client.post(url, json=payload, headers=headers)
+                    except httpx.RequestError as e:
+                        LOGGER.error(f"[SupabaseTokenManager] Erro de conexão ao renovar: {e}")
+                        return False
+            else:
+                # no lock available, proceed but this increases race window
+                try:
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        resp = await client.post(url, json=payload, headers=headers)
+                except httpx.RequestError as e:
+                    LOGGER.error(f"[SupabaseTokenManager] Erro de conexão ao renovar: {e}")
+                    return False
+
             LOGGER.debug(f"[SupabaseTokenManager] Refresh response status: {resp.status_code}")
-            
+
             if resp.status_code not in [200, 201]:
+                # attempt to detect already-used refresh token and recover
+                txt = resp.text or ""
                 LOGGER.error(
                     f"[SupabaseTokenManager] ❌ Falha ao renovar token (HTTP {resp.status_code})\n"
-                    f"    Response: {resp.text[:200]}"
+                    f"    Response: {txt[:200]}"
                 )
+
+                err_code = None
+                try:
+                    err_json = resp.json()
+                    err_code = err_json.get("error_code") or err_json.get("code")
+                except Exception:
+                    err_code = None
+
+                already_used = (
+                    (resp.status_code == 400 and (err_code == "refresh_token_already_used"))
+                    or ("refresh_token_already_used" in txt)
+                    or ("Already Used" in txt)
+                )
+
+                if already_used and attempt == 1:
+                    LOGGER.warning("[SupabaseTokenManager] Refresh token já foi usado; tentando obter token mais recente do DB e re-tentar")
+                    # try to load newer tokens from DB and retry once
+                    if self.db_handler:
+                        try:
+                            saved = None
+                            if self.user_id:
+                                saved = await self.db_handler.get_anitsu_tokens(self.user_id)
+                            else:
+                                saved = await self.db_handler.get_global_anitsu_tokens()
+                            if saved and saved.get("refresh_token") and saved.get("refresh_token") != self.refresh_token:
+                                LOGGER.info("[SupabaseTokenManager] Tokens mais recentes encontrados no DB; atualizando e re-tentando refresh")
+                                self.from_dict(saved)
+                                # update payload for next attempt
+                                payload["refresh_token"] = self.refresh_token
+                                continue
+                            else:
+                                LOGGER.warning("[SupabaseTokenManager] Nenhum token mais recente encontrado no DB para re-tentar")
+                        except Exception as e:
+                            LOGGER.warning(f"[SupabaseTokenManager] Erro ao buscar tokens do DB: {e}")
+
                 return False
-            
+
             # Parse response
             try:
                 data = resp.json()
             except json.JSONDecodeError as e:
                 LOGGER.error(f"[SupabaseTokenManager] Erro ao decodificar resposta: {e}")
                 return False
-            
+
             # Update tokens
-            old_access_token = self.access_token[:10]
-            old_refresh_token = self.refresh_token[:10]
-            
+            old_access_token = (self.access_token[:10] if self.access_token else "(none)")
+            old_refresh_token = (self.refresh_token[:10] if self.refresh_token else "(none)")
+
             self.access_token = data.get("access_token")
             self.refresh_token = data.get("refresh_token")
             self.expires_at = data.get("expires_at")
             expires_in = data.get("expires_in", 0)
-            
+
             if not self.access_token or not self.refresh_token:
                 LOGGER.error("[SupabaseTokenManager] ❌ Resposta de refresh incompleta")
                 return False
