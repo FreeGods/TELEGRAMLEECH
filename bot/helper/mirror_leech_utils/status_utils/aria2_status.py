@@ -25,6 +25,7 @@ class Aria2Status:
         self._download = {}
         self.listener = listener
         self.queued = queued
+        self._processing = False
         self.start_time = 0
         self.seeding = seeding
         self.engine = EngineStatus().STATUS_ARIA2

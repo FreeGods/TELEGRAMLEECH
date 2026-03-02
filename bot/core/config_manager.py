@@ -98,6 +98,8 @@ class Config:
     STATUS_UPDATE_INTERVAL = 15
     STOP_DUPLICATE = False
     STREAMWISH_API = ""
+    SPOTIFY_CLIENT_ID = ""
+    SPOTIFY_CLIENT_SECRET = ""
     SUDO_USERS = ""
     TELEGRAM_API = 0
     TELEGRAM_HASH = ""
@@ -109,12 +111,15 @@ class Config:
     TIMEZONE = "Asia/Kolkata"
     USER_MAX_TASKS = 0
     USER_TIME_INTERVAL = 0
+    DL_REQUEST_DELAY = 2
     UPLOAD_PATHS = {}
     UPSTREAM_REPO = ""
     UPSTREAM_BRANCH = "master"
     UPDATE_PKGS = True
     USENET_SERVERS = []
     USER_SESSION_STRING = ""
+    # supabase anon key used when hitting refresh endpoint; configurable via botsettings
+    ANITSU_SUPABASE_ANON_KEY = ""
     USER_TRANSMISSION = True
     USE_SERVICE_ACCOUNTS = False
     WEB_PINCODE = True

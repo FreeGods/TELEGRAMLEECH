@@ -148,6 +148,12 @@ def direct_link_generator(link):
     domain = urlparse(link).hostname
     if not domain:
         raise DirectDownloadLinkException("ERROR: Invalid URL")
+
+    # Anitsu links are already direct; authentication headers are injected by caller.
+    # Skip generator logic and return original string unchanged to avoid noise.
+    if "nuvem.anitsu.moe" in domain:
+        return link
+
     elif Config.DEBRID_LINK_API and any(
         x in domain for x in debrid_link_supported_sites
     ):

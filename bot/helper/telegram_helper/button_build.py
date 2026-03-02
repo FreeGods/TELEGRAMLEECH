@@ -21,11 +21,20 @@ class ButtonMaker:
             InlineKeyboardButton(text=key, callback_data=data)
         )
 
-    def build_menu(self, b_cols=1, h_cols=8, fb_cols=2, lb_cols=2, f_cols=8):
+    def build_menu(self, b_cols=1, h_cols=8, fb_cols=2, lb_cols=2, f_cols=8, last_row_buttons=0):
         def chunk(lst, n):
             return [lst[i : i + n] for i in range(0, len(lst), n)]
 
-        menu = chunk(self.buttons["default"], b_cols)
+        defaults = list(self.buttons["default"])
+        if last_row_buttons and len(defaults) > 0:
+            tail = defaults[-last_row_buttons:]
+            head = defaults[:-last_row_buttons]
+            menu = chunk(head, b_cols) if head else []
+            if tail:
+                menu.append(tail)
+        else:
+            menu = chunk(defaults, b_cols)
+
         menu = (
             chunk(self.buttons["header"], h_cols) if self.buttons["header"] else []
         ) + menu

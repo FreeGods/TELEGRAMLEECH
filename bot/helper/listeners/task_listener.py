@@ -190,9 +190,18 @@ class TaskListener(TaskConfig):
         if not await aiopath.exists(f"{self.dir}/{self.name}"):
             try:
                 files = await listdir(self.dir)
+                if not files:
+                    await self.on_upload_error("No files found in download directory")
+                    return
                 self.name = files[-1]
                 if self.name == "yt-dlp-thumb":
-                    self.name = files[0]
+                    if len(files) > 1:
+                        self.name = files[0]
+                    else:
+                        await self.on_upload_error(
+                            "Only thumbnail found in download directory"
+                        )
+                        return
             except Exception as e:
                 await self.on_upload_error(str(e))
                 return

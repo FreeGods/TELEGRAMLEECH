@@ -78,6 +78,12 @@ class TelegramUploader:
         self._user_session = self._listener.user_transmission
         self._error = ""
 
+    def _get_client(self):
+        """Get the appropriate Telegram client based on session type"""
+        if self._user_session:
+            return TgClient.user
+        return self._listener.client
+
     async def _upload_progress(self, current, _):
         if self._listener.is_cancelled:
             if self._user_session:
@@ -285,10 +291,12 @@ class TelegramUploader:
                     media=batch,
                     disable_notification=True,
                 )
+            client = self._get_client()
             self._sent_msg = (
-                await self._sent_msg.reply_media_group(
+                await client.send_media_group(
+                    chat_id=self._sent_msg.chat.id,
                     media=batch,
-                    quote=True,
+                    reply_to_message_id=self._sent_msg.id,
                     disable_notification=True,
                 )
             )[-1]
@@ -303,9 +311,12 @@ class TelegramUploader:
                 msgs[index] = await TgClient.user.get_messages(
                     chat_id=msg[0], message_ids=msg[1]
                 )
-        msgs_list = await msgs[0].reply_to_message.reply_media_group(
+        replied_msg = msgs[0].reply_to_message
+        client = self._get_client()
+        msgs_list = await client.send_media_group(
+            chat_id=replied_msg.chat.id,
             media=self._get_input_media(subkey, key),
-            quote=True,
+            reply_to_message_id=replied_msg.id,
             disable_notification=True,
         )
         for msg in msgs:
@@ -497,9 +508,11 @@ class TelegramUploader:
                     return
                 if thumb == "none":
                     thumb = None
-                self._sent_msg = await self._sent_msg.reply_document(
+                client = self._get_client()
+                self._sent_msg = await client.send_document(
+                    chat_id=self._sent_msg.chat.id,
                     document=self._up_path,
-                    quote=True,
+                    reply_to_message_id=self._sent_msg.id,
                     thumb=thumb,
                     caption=cap_mono,
                     disable_content_type_detection=True,
@@ -527,9 +540,11 @@ class TelegramUploader:
                     return
                 if thumb == "none":
                     thumb = None
-                self._sent_msg = await self._sent_msg.reply_video(
+                client = self._get_client()
+                self._sent_msg = await client.send_video(
+                    chat_id=self._sent_msg.chat.id,
                     video=self._up_path,
-                    quote=True,
+                    reply_to_message_id=self._sent_msg.id,
                     caption=cap_mono,
                     duration=duration,
                     width=width,
@@ -546,9 +561,11 @@ class TelegramUploader:
                     return
                 if thumb == "none":
                     thumb = None
-                self._sent_msg = await self._sent_msg.reply_audio(
+                client = self._get_client()
+                self._sent_msg = await client.send_audio(
+                    chat_id=self._sent_msg.chat.id,
                     audio=self._up_path,
-                    quote=True,
+                    reply_to_message_id=self._sent_msg.id,
                     caption=cap_mono,
                     duration=duration,
                     performer=artist,
@@ -561,9 +578,11 @@ class TelegramUploader:
                 key = "photos"
                 if self._listener.is_cancelled:
                     return
-                self._sent_msg = await self._sent_msg.reply_photo(
+                client = self._get_client()
+                self._sent_msg = await client.send_photo(
+                    chat_id=self._sent_msg.chat.id,
                     photo=self._up_path,
-                    quote=True,
+                    reply_to_message_id=self._sent_msg.id,
                     caption=cap_mono,
                     disable_notification=True,
                     progress=self._upload_progress,

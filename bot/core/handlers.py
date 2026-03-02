@@ -8,11 +8,12 @@ from ..core.config_manager import Config
 from ..helper.ext_utils.help_messages import BOT_COMMANDS
 from ..helper.telegram_helper.bot_commands import BotCommands
 from ..helper.telegram_helper.filters import CustomFilters
+from ..helper.telegram_helper.message_utils import edit_message
 from ..modules import *
 from .tg_client import TgClient
 
 
-def add_handlers():
+async def add_handlers():
     TgClient.bot.add_handler(
         MessageHandler(
             authorize,
@@ -302,7 +303,6 @@ def add_handlers():
             & CustomFilters.authorized,
         )
     )
-
     TgClient.bot.add_handler(
         MessageHandler(
             bot_stats,
@@ -371,6 +371,98 @@ def add_handlers():
             & CustomFilters.authorized,
         )
     )
+
+    # ── Manga Leech ───────────────────────────────────────────────────────────
+    # Comando principal: /mangaleech [-z]
+    TgClient.bot.add_handler(
+        MessageHandler(
+            mangaleech,
+            filters=command(BotCommands.MangaLeechCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Dispatcher único para TODOS os callbacks do fluxo manga (prefixo "mng:")
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            manga_callback,
+            filters=regex(r"^mng:\d+:"),
+        )
+    )
+    # Handler de texto para fases de espera (search / link / capítulos)
+    TgClient.bot.add_handler(
+        MessageHandler(
+            manga_message_handler,
+            filters=CustomFilters.manga_session,
+        )
+    )
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── Novel Leech ───────────────────────────────────────────────────────────
+    # Comando principal: /novelleech
+    TgClient.bot.add_handler(
+        MessageHandler(
+            novelleech,
+            filters=command(BotCommands.NovelLeechCommand if hasattr(BotCommands, 'NovelLeechCommand') else 'novelleech', case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Dispatcher único para TODOS os callbacks do fluxo novel (prefixo "nvl:")
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            novel_callback,
+            filters=regex(r"^nvl:\d+:"),
+        )
+    )
+    # Handler de texto para fases de espera (search / link / capítulos)
+    TgClient.bot.add_handler(
+        MessageHandler(
+            novel_text_handler,
+            filters=CustomFilters.novel_session,
+        )
+    )
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── Anitsu Leech ──────────────────────────────────────────────────────────
+    # Diagnostic command: /anitsucheck
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsucheck,
+            filters=command(BotCommands.AnitsuCheckCommand if hasattr(BotCommands, 'AnitsuCheckCommand') else 'anitsucheck', case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Refresh command: /anitsurefresh
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsurefresh,
+            filters=command(BotCommands.AnitsuRefreshCommand if hasattr(BotCommands, 'AnitsuRefreshCommand') else 'anitsurefresh', case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Comando principal: /anitsuleech
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsuleech,
+            filters=command(BotCommands.AnitsuLeechCommand, case_sensitive=True)
+            & CustomFilters.authorized,
+        )
+    )
+    # Dispatcher único para TODOS os callbacks do fluxo Anitsu (prefixo "ant:")
+    TgClient.bot.add_handler(
+        CallbackQueryHandler(
+            anitsu_callback,
+            filters=regex(r"^ant:\d+:"),
+        )
+    )
+    # Handler de texto para busca de anime
+    TgClient.bot.add_handler(
+        MessageHandler(
+            anitsu_message_handler,
+            filters=CustomFilters.anitsu_session,
+        )
+    )
+    # ─────────────────────────────────────────────────────────────────────────
+
     if Config.SET_COMMANDS:
         global BOT_COMMANDS
 
@@ -410,7 +502,7 @@ def add_handlers():
                 BOT_COMMANDS, "Login", "[password] Login to Bot", 14
             )
 
-        TgClient.bot.set_bot_commands(
+        await TgClient.bot.set_bot_commands(
             [
                 BotCommand(
                     cmds[0] if isinstance(cmds, list) else cmds,
@@ -420,4 +512,5 @@ def add_handlers():
                 for cmds in [getattr(BotCommands, f"{cmd}Command", None)]
                 if cmds is not None
             ]
-        )
+    )
+    

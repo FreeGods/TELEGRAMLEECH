@@ -38,6 +38,23 @@ from .stats import bot_stats, stats_pages, get_packages_version
 from .status import task_status, status_pages
 from .users_settings import get_users_settings, edit_user_settings, send_user_settings
 from .ytdlp import ytdl, ytdl_leech
+from .mangaleech import (
+    mangaleech,
+    manga_callback,        # dispatcher único (substitui manga_source_callback,
+    manga_message_handler, #   manga_mode_callback e manga_result_callback)
+)
+from .novelleech import (
+    novelleech,
+    novel_callback,
+    novel_text_handler,
+)
+from .anitsuleech import (
+    anitsuleech,
+    anitsu_callback,
+    anitsu_message_handler,
+    anitsurefresh,
+    anitsucheck,
+)
 
 __all__ = [
     "send_bot_settings",
@@ -103,4 +120,15 @@ __all__ = [
     "send_user_settings",
     "ytdl",
     "ytdl_leech",
+    "mangaleech",
+    "manga_callback",
+    "manga_message_handler",
+    "novelleech",
+    "novel_callback",
+    "novel_text_handler",
+    "anitsuleech",
+    "anitsu_callback",
+    "anitsu_message_handler",
+    "anitsurefresh",
+    "anitsucheck",
 ]

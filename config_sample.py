@@ -65,6 +65,10 @@ STORAGE_LIMIT = 0
 # Insta video downloader api
 INSTADL_API = ""
 
+# Spotify Downloader (spotdl)
+SPOTIFY_CLIENT_ID = ""
+SPOTIFY_CLIENT_SECRET = ""
+
 # Nzb search
 HYDRA_IP = ""
 HYDRA_API_KEY = ""
@@ -126,6 +130,11 @@ RCLONE_SERVE_PASS = ""
 # JDownloader
 JD_EMAIL = ""
 JD_PASS = ""
+
+# Anitsu Cloud
+ANITSU_COOKIE_FILE = ""
+# Supabase anon key used when refreshing tokens. you can change it later via /botsettings (sudo)
+ANITSU_SUPABASE_ANON_KEY = ""
 
 # Sabnzbd
 USENET_SERVERS = [

@@ -96,7 +96,7 @@ async def main():
 
     add_aria2_callbacks()
     create_help_buttons()
-    add_handlers()
+    await add_handlers()
 
     plugin_manager = get_plugin_manager()
     plugin_manager.bot = TgClient.bot
@@ -129,7 +129,7 @@ async def main():
             restart_message = await send_message(reply_to, "Restarting Session(s)...")
             await delete_message(message)
             await TgClient.reload()
-            add_handlers()
+            await add_handlers()
             
             # ✅ RE-REGISTRO DOS COMANDOS SPOTDL APÓS RESTART
             TgClient.bot.add_handler(

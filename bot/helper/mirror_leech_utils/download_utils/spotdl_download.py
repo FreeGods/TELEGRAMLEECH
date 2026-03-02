@@ -1,11 +1,13 @@
 from logging import getLogger
-from os import path as ospath, makedirs
+from os import path as ospath, makedirs, getcwd, chdir
 from secrets import token_hex
 from contextlib import suppress
 from shutil import rmtree
 
 from spotdl import Spotdl
 from spotdl.types.song import Song
+from threading import Lock
+from time import sleep as _sleep
 
 from .... import task_dict_lock, task_dict
 from ....core.config_manager import BinConfig, Config
@@ -20,6 +22,65 @@ from ...telegram_helper.message_utils import send_status_message
 from ..status_utils.spotdl_status import SpotdlStatus
 
 LOGGER = getLogger(__name__)
+
+# Module-level singleton Spotdl client to avoid repeated initialization errors
+_GLOBAL_SPOTDL_CLIENT = None
+_GLOBAL_SPOTDL_LOCK = Lock()
+
+
+def get_spotdl_client(ffmpeg=None, bitrate="320k", fmt="mp3", threads=4):
+    global _GLOBAL_SPOTDL_CLIENT
+    if _GLOBAL_SPOTDL_CLIENT is not None:
+        return _GLOBAL_SPOTDL_CLIENT
+
+    # Ensure only one thread tries to initialize at a time
+    with _GLOBAL_SPOTDL_LOCK:
+        if _GLOBAL_SPOTDL_CLIENT is not None:
+            return _GLOBAL_SPOTDL_CLIENT
+
+        # Get Spotify credentials from config if available
+        client_id = Config.SPOTIFY_CLIENT_ID or None
+        client_secret = Config.SPOTIFY_CLIENT_SECRET or None
+
+        # Try a couple times in case of race conditions inside external lib
+        for attempt in range(3):
+            try:
+                client = Spotdl(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    headless=True,
+                    downloader_settings={
+                        "ffmpeg": ffmpeg or get_ffmpeg_path(),
+                        "bitrate": bitrate,
+                        "format": fmt,
+                        "threads": threads,
+                    },
+                )
+                _GLOBAL_SPOTDL_CLIENT = client
+                LOGGER.info("Spotdl client initialized (singleton)")
+                return _GLOBAL_SPOTDL_CLIENT
+            except Exception as e:
+                # If error indicates client already initialized, wait and retry
+                msg = str(e).lower()
+                LOGGER.warning(f"Spotdl init attempt {attempt+1} failed: {e}")
+                if "already been initialized" in msg or "already initialized" in msg:
+                    _sleep(0.5)
+                    continue
+                # For other errors, re-raise after logging
+                LOGGER.error(f"Failed to initialize spotdl client: {e}")
+                raise
+        # Final check
+        if _GLOBAL_SPOTDL_CLIENT is None:
+            raise RuntimeError("Unable to initialize spotdl client")
+
+
+def reset_spotdl_client():
+    """Reset the global Spotdl client to reinitialize with new credentials"""
+    global _GLOBAL_SPOTDL_CLIENT
+    with _GLOBAL_SPOTDL_LOCK:
+        if _GLOBAL_SPOTDL_CLIENT is not None:
+            _GLOBAL_SPOTDL_CLIENT = None
+            LOGGER.info("Spotdl client reset. Will reinitialize on next use.")
 
 
 def get_ffmpeg_path():
@@ -69,7 +130,7 @@ class SpotdlHelper:
         self.playlist_count = 0
         self.total_songs = 0
         
-        # Spotdl client - será criado em cada download
+        # Spotdl client reference (may point to shared singleton)
         self.spotdl_client = None
         
     @property
@@ -117,20 +178,13 @@ class SpotdlHelper:
     def _extract_meta_data(self, link):
         """Extract metadata from Spotify link"""
         try:
-            # ✅ CORREÇÃO 1: Criar NOVO cliente para cada download
-            # Isso evita o erro "A spotify client has already been initialized"
+            # Inicializa/obtém cliente Spotdl compartilhado para evitar erro
             ffmpeg_path = get_ffmpeg_path()
-            
-            self.spotdl_client = Spotdl(
-                client_id=None,
-                client_secret=None,
-                headless=True,
-                downloader_settings={
-                    'ffmpeg': ffmpeg_path,
-                    'bitrate': '320k',
-                    'format': 'mp3',
-                    'threads': 4,
-                }
+            self.spotdl_client = get_spotdl_client(
+                ffmpeg=ffmpeg_path,
+                bitrate="320k",
+                fmt="mp3",
+                threads=4,
             )
             
             # Get songs from link
@@ -208,7 +262,21 @@ class SpotdlHelper:
                     LOGGER.info(f"[{idx}/{len(songs)}] Downloading: {song.name}")
                     
                     # Download individual song
-                    result, error = self.spotdl_client.downloader.download_song(song)
+                    try:
+                        result, error = self.spotdl_client.downloader.download_song(
+                            song, output=output_path
+                        )
+                    except TypeError:
+                        # Older/newer spotdl API might not accept output arg;
+                        # fallback: temporarily change cwd to output_path
+                        prev_cwd = getcwd()
+                        try:
+                            chdir(output_path)
+                            result, error = self.spotdl_client.downloader.download_song(
+                                song
+                            )
+                        finally:
+                            chdir(prev_cwd)
                     
                     if result:
                         self.playlist_count += 1
@@ -224,7 +292,20 @@ class SpotdlHelper:
                 return
             
             LOGGER.info(f"Download complete: {self.playlist_count}/{len(songs)} songs downloaded")
-            
+            # Log contents of expected output directories for debugging
+            try:
+                if ospath.exists(output_path):
+                    files = [f for f in __import__("os").listdir(output_path)]
+                    LOGGER.info(f"Files in output_path ({output_path}): {files}")
+                else:
+                    LOGGER.info(f"Expected output_path does not exist: {output_path}")
+                if ospath.exists(path):
+                    root_files = [f for f in __import__("os").listdir(path)]
+                    LOGGER.info(f"Files in path ({path}): {root_files}")
+                else:
+                    LOGGER.info(f"Expected path does not exist: {path}")
+            except Exception as e:
+                LOGGER.warning(f"Could not list download dirs for debug: {e}")
             # ✅ Chamar on_download_complete SOMENTE se baixou algo
             if self.playlist_count > 0:
                 async_to_sync(self._listener.on_download_complete)
@@ -236,12 +317,9 @@ class SpotdlHelper:
             if not self._listener.is_cancelled:
                 self._on_download_error(str(e))
         finally:
-            # ✅ CORREÇÃO 1: Limpar cliente após uso
-            if self.spotdl_client:
-                with suppress(Exception):
-                    # Cleanup do cliente
-                    self.spotdl_client = None
-                    LOGGER.info("Spotdl client cleaned up")
+            # Não destruímos o cliente singleton aqui, apenas removemos a
+            # referência local — o client compartilhado vive no módulo.
+            self.spotdl_client = None
 
     async def add_download(self, path):
         self._gid = token_hex(5)

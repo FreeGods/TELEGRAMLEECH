@@ -101,6 +101,10 @@ async def _on_download_complete(api, data):
     else:
         LOGGER.info(f"onDownloadComplete: {aria2_name(download)} - Gid: {gid}")
         if task := await get_task_by_gid(gid):
+            # Prevent duplicate processing if callback fires multiple times
+            if getattr(task, "_processing", False):
+                return
+            task._processing = True
             await task.listener.on_download_complete()
             if intervals["stopAll"]:
                 return
@@ -136,6 +140,10 @@ async def _on_bt_download_complete(api, data):
                 await api.forcePause(gid)
             except (TimeoutError, ClientError, Exception) as e:
                 LOGGER.error(f"onBtDownloadComplete: {e} GID: {gid}")
+        # Prevent duplicate processing if callback fires multiple times
+        if getattr(task, "_processing", False):
+            return
+        task._processing = True
         await task.listener.on_download_complete()
         if intervals["stopAll"]:
             return

@@ -81,6 +81,13 @@ def create_help_buttons():
     _build_command_usage(MIRROR_HELP_DICT, "mirror")
     _build_command_usage(YT_HELP_DICT, "yt")
     _build_command_usage(CLONE_HELP_DICT, "clone")
+    # Spotdl help
+    try:
+        from .help_messages import SPOTDL_HELP_DICT
+
+        _build_command_usage(SPOTDL_HELP_DICT, "spotdl")
+    except Exception:
+        pass
 
 
 def compare_versions(v1, v2):

@@ -100,6 +100,12 @@ sabnzbd_client = SabnzbdClient(
     api_key="admin",
     port="8070",
 )
-srun([BinConfig.QBIT_NAME, "-d", f"--profile={getcwd()}"], check=False)
+# Tentativa de iniciar qBittorrent de forma silenciosa; falhas devem ser
+# ignoradas porque a ausência do binário não impede o resto do bot de
+# funcionar (especialmente em ambientes de testes ou contenêineres leves).
+try:
+    srun([BinConfig.QBIT_NAME, "-d", f"--profile={getcwd()}"], check=False)
+except Exception as e:  # pylint: disable=broad-except
+    LOGGER.warning(f"Falha ao iniciar {BinConfig.QBIT_NAME}: {e}")
 
 scheduler = AsyncIOScheduler(event_loop=bot_loop)
